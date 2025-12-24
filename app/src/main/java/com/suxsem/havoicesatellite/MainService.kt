@@ -8,12 +8,14 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -21,17 +23,11 @@ import androidx.lifecycle.MutableLiveData
 
 class MainService : Service() {
 
-    private val PERSISTENT_CHANNEL_ID = "persistent_channel"
-    private val STANDARD_CHANNEL_ID = "standard_channel"
-
     private var recorderThread: AudioRecorderThread? = null
 
     override fun onCreate() {
+
         super.onCreate()
-
-        ServiceState.setRunning(true)
-
-        createNotificationChannels()
 
         if (ContextCompat.checkSelfPermission(
                 this, Manifest.permission.RECORD_AUDIO
@@ -54,12 +50,11 @@ class MainService : Service() {
         }
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = manager.getNotificationChannel(PERSISTENT_CHANNEL_ID)
+        val channel = manager.getNotificationChannel(NOTIF_CHANNEL_PERSISTENT)
         if (channel?.importance == NotificationManager.IMPORTANCE_NONE) {
             stopSelf()
             return
         }
-
 
         val notificationIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
@@ -69,16 +64,29 @@ class MainService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, PERSISTENT_CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, NOTIF_CHANNEL_PERSISTENT)
             .setContentTitle("HA Voice Satellite")
             .setContentText("Service running")
             //.setSmallIcon(R.drawable.ic_service) // usa la tua icona
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true) // la notifica non può essere rimossa dall'utente
             .build()
 
-        startForeground(1, notification)
+        ServiceCompat.startForeground(
+            /* service = */ this,
+            /* id = */ 100, // Cannot be 0
+            /* notification = */ notification,
+            /* foregroundServiceType = */
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            } else {
+                0
+            },
+        )
+
+        ServiceState.setRunning(true)
 
         val modelRunner = ONNXModelRunner(assets)
         val model = Model(modelRunner);
@@ -92,7 +100,7 @@ class MainService : Service() {
                     Manifest.permission.POST_NOTIFICATIONS
                 ) == PackageManager.PERMISSION_GRANTED
             ) {
-                val notification = NotificationCompat.Builder(this, STANDARD_CHANNEL_ID)
+                val notification = NotificationCompat.Builder(this, NOTIF_CHANNEL_DETECTED)
                     .setContentTitle("WAKEWORD RILEVATA")
                     .setContentText("WAKEWORD RILEVATA")
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -119,6 +127,7 @@ class MainService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
         return START_STICKY
     }
 
@@ -130,16 +139,6 @@ class MainService : Service() {
         recorderThread?.join()
         recorderThread = null
         ServiceState.setRunning(false)
-    }
-
-    private fun createNotificationChannels() {
-        val manager = getSystemService(NotificationManager::class.java)
-        val wakewordChannel = NotificationChannel(
-            STANDARD_CHANNEL_ID,
-            "Standard Channel",
-            NotificationManager.IMPORTANCE_DEFAULT
-        )
-        manager.createNotificationChannel(wakewordChannel)
     }
 }
 

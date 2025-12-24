@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
         val activity = this
 
-        createPersistentNotificationsChannel()
+        createNotificationsChannels()
 
         setContent {
             HAVoiceSatelliteTheme {
@@ -92,16 +92,24 @@ class MainActivity : ComponentActivity() {
         viewModel.refresh()
     }
 
-    fun createPersistentNotificationsChannel() {
-        val serviceChannel = NotificationChannel(
-            "persistent_channel",
-            "Persistent Channel",
-            NotificationManager.IMPORTANCE_DEFAULT
-        )
+    fun createNotificationsChannels() {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(serviceChannel)
+        manager.createNotificationChannel(NotificationChannel(
+            NOTIF_CHANNEL_PERSISTENT,
+            "Persistent Channel",
+            NotificationManager.IMPORTANCE_LOW
+        ))
+        manager.createNotificationChannel(NotificationChannel(
+            NOTIF_CHANNEL_DETECTED,
+            "Detected Channel",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ))
+        manager.createNotificationChannel(NotificationChannel(
+            NOTIF_CHANNEL_STANDARD,
+            "Standard Channel",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ))
     }
-
 }
 
 class MyViewModel(application: Application) : AndroidViewModel(application) {
@@ -298,7 +306,8 @@ fun ServiceControlUI(viewModel: MyViewModel) {
         ) {
             Checkbox(
                 checked = autoStart,
-                onCheckedChange = viewModel::setAutoStart
+                onCheckedChange = viewModel::setAutoStart,
+                enabled = allMet
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text("Start on Boot")

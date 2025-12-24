@@ -5,8 +5,8 @@ import android.util.Log;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.FloatBuffer;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Random;
@@ -15,7 +15,6 @@ import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
-
 
 class ONNXModelRunner {
 
@@ -71,8 +70,8 @@ class ONNXModelRunner {
 
         }
         finally {
-            if (inputTensor != null) inputTensor.close();
-            if (session!=null) session.close();
+            inputTensor.close();
+            session.close();
         }
         OrtEnvironment.getEnvironment().close();
         return outputArray;
@@ -80,9 +79,7 @@ class ONNXModelRunner {
     public static float[][] squeeze(float[][][][] originalArray) {
         float[][] squeezedArray = new float[originalArray[0][0].length][originalArray[0][0][0].length];
         for (int i = 0; i < originalArray[0][0].length; i++) {
-            for (int j = 0; j < originalArray[0][0][0].length; j++) {
-                squeezedArray[i][j] = originalArray[0][0][i][j];
-            }
+            System.arraycopy(originalArray[0][0][i], 0, squeezedArray[i], 0, originalArray[0][0][0].length);
         }
 
         return squeezedArray;
@@ -106,9 +103,7 @@ class ONNXModelRunner {
         is.read(model);
         is.close();
 
-        OrtSession sess = env.createSession(model);
-        OnnxTensor inputTensor = OnnxTensor.createTensor(env, input);
-        try (OrtSession.Result results = sess.run(Collections.singletonMap("input_1", inputTensor))) {
+        try (OrtSession session = env.createSession(model); OnnxTensor inputTensor = OnnxTensor.createTensor(env, input); OrtSession.Result results = session.run(Collections.singletonMap("input_1", inputTensor))) {
             // Extract the output tensor
             float[][][][] rawOutput = (float[][][][]) results.get(0).getValue();
 
@@ -121,10 +116,8 @@ class ONNXModelRunner {
         } catch (Exception e) {
             Log.d("exception", "not_predicted " + e.getMessage());
         }
-        finally {
-            if (inputTensor != null) inputTensor.close(); // You're doing this, which is good.
-            if (sess != null) sess.close(); // This should be added to ensure the session is also closed.
-        }
+        // You're doing this, which is good.
+        // This should be added to ensure the session is also closed.
         env.close();
         return null;
     }
@@ -134,24 +127,18 @@ class ONNXModelRunner {
         String resultant="";
 
 
-        OnnxTensor inputTensor = null;
-
-        try {
+        try (OnnxTensor inputTensor = OnnxTensor.createTensor(hey_nugget_env, inputArray)) {
             // Create a tensor from the input array
-            inputTensor = OnnxTensor.createTensor(hey_nugget_env, inputArray);
             // Run the inference
             OrtSession.Result outputs = hey_nugget_session.run(Collections.singletonMap(hey_nugget_session.getInputNames().iterator().next(), inputTensor));
             // Extract the output tensor, convert it to the desired type
-             result=(float[][]) outputs.get(0).getValue();
-            resultant= String.format(Locale.US, "%.5f", (double) result[0][0]);
+            result = (float[][]) outputs.get(0).getValue();
+            resultant = String.format(Locale.US, "%.5f", (double) result[0][0]);
 
         } catch (OrtException e) {
             e.printStackTrace();
         }
-        finally {
-            if (inputTensor != null) inputTensor.close();
-             // Add this to ensure the session is properly closed.
-        }
+        // Add this to ensure the session is properly closed.
         return resultant;
     }
     private byte[] readModelFile(AssetManager assetManager, String filename) throws IOException {
@@ -166,34 +153,43 @@ class ONNXModelRunner {
 
 
 public class Model {
-    int n_prepared_samples=1280;
-    int sampleRate=16000;
-    int melspectrogramMaxLen= 10*97;
-    int feature_buffer_max_len=120;
+
+    int sampleRate = 16000;
+
+    // Stato dell'Energy Gate
+    private long lastActiveTime = 0;
+    private static final long HANGOVER_MS = 500; // Mezzo secondo di coda
+    private static final float ENERGY_THRESHOLD = 0.01f; // Valore da calibrare
+
+    // Buffer audio circolari
+    private final float[] circularAudioBuffer = new float[sampleRate * 10]; // 10 secondi
+    private int circularWriteIndex = 0;
+    private int totalSamplesInCircular = 0; // Per sapere quanto buffer è pieno
+
+    int melspectrogramMaxLen = 10 * 97;
+    int feature_buffer_max_len = 120;
     ONNXModelRunner modelRunner;
     float[][] featureBuffer;
-    ArrayDeque<Float> raw_data_buffer=new ArrayDeque<>(sampleRate * 10);;
+
     float[] raw_data_remainder = new float[0];
     float[][] melspectrogramBuffer;
-    int accumulated_samples=0;
+    int accumulated_samples = 0;
+
     Model(ONNXModelRunner modelRunner) {
         melspectrogramBuffer = new float[76][32];
-        for (int i = 0; i < melspectrogramBuffer.length; i++) {
-            for (int j = 0; j < melspectrogramBuffer[i].length; j++) {
-                melspectrogramBuffer[i][j] = 1.0f; // Assign 1.0f to simulate numpy.ones
-            }
+        for (float[] floats : melspectrogramBuffer) {
+            // Assign 1.0f to simulate numpy.ones
+            Arrays.fill(floats, 1.0f);
         }
-        this.modelRunner=modelRunner;
-        try{
+        this.modelRunner = modelRunner;
+        try {
 
             this.featureBuffer = this._getEmbeddings(this.generateRandomIntArray(16000 * 4), 76, 8);
 
-        }
-    catch (Exception e)
-    {
+        } catch (Exception e) {
 
-        System.out.print(e.getMessage());
-    }
+            System.out.print(e.getMessage());
+        }
 
     }
 
@@ -229,10 +225,7 @@ public class Model {
                 System.arraycopy(spec[i + j], 0, window[j], 0, spec[0].length);
             }
 
-            // Check if the window is full-sized (not truncated)
-            if (window.length == windowSize) {
-                windows.add(window);
-            }
+            windows.add(window);
         }
 
         // Convert ArrayList to array and add the required extra dimension
@@ -246,8 +239,7 @@ public class Model {
         }
 
         try {
-           float[][]  result= modelRunner.generateEmbeddings(batch);
-           return result;
+            return modelRunner.generateEmbeddings(batch);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -263,191 +255,296 @@ public class Model {
         }
         return arr;
     }
-    public void bufferRawData(float[] x) { // Change double[] to match your actual data type
-        // Check if input x is not null
-        if (x != null) {
-            // Check if raw_data_buffer has enough space, if not, remove old data
-            while (raw_data_buffer.size() + x.length > sampleRate * 10) {
-                raw_data_buffer.poll(); // or pollFirst() - removes and returns the first element of this deque
-            }
-            for (float value : x) {
-                raw_data_buffer.offer(value); // or offerLast() - Inserts the specified element at the end of this deque
-            }
+
+    public void bufferRawData(float[] data) {
+        if (data == null || data.length == 0) return;
+
+        int length = data.length;
+        // Se i dati sono più lunghi del buffer stesso (improbabile), prendiamo solo gli ultimi
+        if (length > circularAudioBuffer.length) {
+            float[] truncated = new float[circularAudioBuffer.length];
+            System.arraycopy(data, length - circularAudioBuffer.length, truncated, 0, circularAudioBuffer.length);
+            data = truncated;
+            length = data.length;
+        }
+
+        int spaceAtEnd = circularAudioBuffer.length - circularWriteIndex;
+
+        if (length <= spaceAtEnd) {
+            // I dati ci stanno senza ricominciare da capo
+            System.arraycopy(data, 0, circularAudioBuffer, circularWriteIndex, length);
+            circularWriteIndex += length;
+        } else {
+            // Dobbiamo dividere la copia: una parte alla fine, il resto all'inizio
+            System.arraycopy(data, 0, circularAudioBuffer, circularWriteIndex, spaceAtEnd);
+            System.arraycopy(data, spaceAtEnd, circularAudioBuffer, 0, length - spaceAtEnd);
+            circularWriteIndex = length - spaceAtEnd;
+        }
+
+        // Aggiorniamo il totale dei campioni contenuti (fino al massimo della capacità)
+        totalSamplesInCircular = Math.min(circularAudioBuffer.length, totalSamplesInCircular + length);
+
+        if (circularWriteIndex >= circularAudioBuffer.length) {
+            circularWriteIndex = 0;
         }
     }
 
     public void streamingMelSpectrogram(int n_samples) {
-        if (raw_data_buffer.size() < 400) {
-            throw new IllegalArgumentException("The number of input frames must be at least 400 samples @ 16kHz (25 ms)!");
+        // Il modello ha bisogno di n_samples + 480 (per il padding/overlap dello spettrogramma)
+        int samplesToRead = n_samples + 480;
+
+        if (totalSamplesInCircular < samplesToRead) {
+            // Se non abbiamo abbastanza storia, leggiamo tutto quello che abbiamo
+            samplesToRead = totalSamplesInCircular;
         }
 
-        // Converting the last n_samples + 480 (3 * 160) samples from raw_data_buffer to an ArrayList
-        float[] tempArray = new float[n_samples + 480]; // 160 * 3 = 480
-        Object[] rawDataArray = raw_data_buffer.toArray();
-        for (int i = Math.max(0, rawDataArray.length - n_samples - 480); i < rawDataArray.length; i++) {
-            tempArray[i - Math.max(0, rawDataArray.length - n_samples - 480)] = (Float) rawDataArray[i];
-        }
+        // Estraiamo i dati in modo efficiente
+        float[] tempArray = getSamplesFromCircular(samplesToRead);
 
-        // Assuming getMelSpectrogram returns a two-dimensional float array
-        float[][] new_mel_spectrogram ;
+        // Chiamata al modello ONNX per lo spettrogramma
+        float[][] new_mel_spectrogram;
         try {
             new_mel_spectrogram = modelRunner.get_mel_spectrogram(tempArray);
-        } catch (OrtException e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } catch (OrtException | IOException e) {
+            throw new RuntimeException("Errore ONNX Spectrogram: " + e.getMessage());
         }
 
-        // Combine existing melspectrogram_buffer with new_mel_spectrogram
-        float[][] combined = new float[this.melspectrogramBuffer.length + new_mel_spectrogram.length][];
+        // Aggiornamento del melspectrogramBuffer (Matrice float[][])
+        updateMelBuffer(new_mel_spectrogram);
+    }
 
+    private void updateMelBuffer(float[][] new_mel) {
+        float[][] combined = new float[this.melspectrogramBuffer.length + new_mel.length][];
+
+        // Copia il vecchio e il nuovo
         System.arraycopy(this.melspectrogramBuffer, 0, combined, 0, this.melspectrogramBuffer.length);
-        System.arraycopy(new_mel_spectrogram, 0, combined, this.melspectrogramBuffer.length, new_mel_spectrogram.length);
+        System.arraycopy(new_mel, 0, combined, this.melspectrogramBuffer.length, new_mel.length);
+
         this.melspectrogramBuffer = combined;
 
-        // Trim the melspectrogram_buffer if it exceeds the max length
+        // Trim se eccede melspectrogramMaxLen (970 frame nel tuo codice)
         if (this.melspectrogramBuffer.length > melspectrogramMaxLen) {
             float[][] trimmed = new float[melspectrogramMaxLen][];
-            System.arraycopy(this.melspectrogramBuffer, this.melspectrogramBuffer.length - melspectrogramMaxLen, trimmed, 0, melspectrogramMaxLen);
+            System.arraycopy(this.melspectrogramBuffer,
+                    this.melspectrogramBuffer.length - melspectrogramMaxLen,
+                    trimmed, 0, melspectrogramMaxLen);
             this.melspectrogramBuffer = trimmed;
         }
-
     }
 
-    public int streaming_features(float[] audiobuffer) {
-        int processed_samples = 0;
-        this.accumulated_samples=0;
-        if (raw_data_remainder.length != 0) {
-            // Create a new array to hold the result of concatenation
-            float[] concatenatedArray = new float[raw_data_remainder.length + audiobuffer.length];
+    public void updateBuffers(float[] audiobuffer) {
+        // 1. Uniamo l'audio attuale con quello che era rimasto indietro ("avanzo")
+        float[] combined;
+        if (raw_data_remainder != null && raw_data_remainder.length > 0) {
+            combined = new float[raw_data_remainder.length + audiobuffer.length];
+            System.arraycopy(raw_data_remainder, 0, combined, 0, raw_data_remainder.length);
+            System.arraycopy(audiobuffer, 0, combined, raw_data_remainder.length, audiobuffer.length);
+        } else {
+            combined = audiobuffer;
+        }
 
-            // Copy elements from raw_data_remainder to the new array
-            System.arraycopy(raw_data_remainder, 0, concatenatedArray, 0, raw_data_remainder.length);
+        // 2. Calcoliamo quanti blocchi da 1280 possiamo processare
+        int totalLen = combined.length;
+        int processableLen = (totalLen / 1280) * 1280;
+        int leftoverLen = totalLen % 1280;
 
-            // Copy elements from x to the new array, starting right after the last element of raw_data_remainder
-            System.arraycopy(audiobuffer, 0, concatenatedArray, raw_data_remainder.length, audiobuffer.length);
+        if (processableLen > 0) {
+            // Estraiamo la parte divisibile per 1280
+            float[] toProcess = new float[processableLen];
+            System.arraycopy(combined, 0, toProcess, 0, processableLen);
 
-            // Assign the concatenated array back to x
-            audiobuffer = concatenatedArray;
+            // Carichiamo nel buffer circolare e aggiorniamo il contatore per ONNX
+            this.bufferRawData(toProcess);
+            this.accumulated_samples += processableLen;
+        }
 
-            // Reset raw_data_remainder to an empty array
+        // 3. Salviamo l'avanzo per il prossimo ciclo (anche se processableLen era 0)
+        if (leftoverLen > 0) {
+            raw_data_remainder = new float[leftoverLen];
+            System.arraycopy(combined, totalLen - leftoverLen, raw_data_remainder, 0, leftoverLen);
+        } else {
             raw_data_remainder = new float[0];
         }
+    }
 
-        if (this.accumulated_samples + audiobuffer.length >= 1280) {
-            int remainder = (this.accumulated_samples + audiobuffer.length) % 1280;
-            if (remainder != 0) {
-                // Create an array for x_even_chunks that excludes the last 'remainder' elements of 'x'
-                float[] x_even_chunks = new float[audiobuffer.length - remainder];
-                System.arraycopy(audiobuffer, 0, x_even_chunks, 0, audiobuffer.length - remainder);
-
-                // Buffer the even chunks of data
-                this.bufferRawData(x_even_chunks);
-
-                // Update accumulated_samples by the length of x_even_chunks
-                this.accumulated_samples += x_even_chunks.length;
-
-                // Set raw_data_remainder to the last 'remainder' elements of 'x'
-                this.raw_data_remainder = new float[remainder];
-                System.arraycopy(audiobuffer, audiobuffer.length - remainder, this.raw_data_remainder, 0, remainder);
-            } else if (remainder == 0) {
-                // Buffer the entire array 'x'
-                this.bufferRawData(audiobuffer);
-
-                // Update accumulated_samples by the length of 'x'
-                this.accumulated_samples += audiobuffer.length;
-
-                // Set raw_data_remainder to an empty array
-                this.raw_data_remainder = new float[0];
-            }
-        } else {
-            this.accumulated_samples += audiobuffer.length;
-            this.bufferRawData(audiobuffer); // Adapt this method according to your class
+    private float[] getSamplesFromCircular(int nSamples) {
+        float[] result = new float[nSamples];
+        if (nSamples > totalSamplesInCircular) {
+            nSamples = totalSamplesInCircular; // Non possiamo dare più di quello che abbiamo
         }
 
+        // Calcoliamo la posizione di partenza nell'array circolare
+        // circularWriteIndex è dove scriveremo il PROSSIMO campione,
+        // quindi l'ultimo scritto è a circularWriteIndex - 1.
+        int startReadIndex = (circularWriteIndex - nSamples + circularAudioBuffer.length) % circularAudioBuffer.length;
 
-        if (this.accumulated_samples >= 1280 && this.accumulated_samples % 1280 == 0) {
+        int spaceAtEnd = circularAudioBuffer.length - startReadIndex;
 
+        if (nSamples <= spaceAtEnd) {
+            // I dati sono contigui
+            System.arraycopy(circularAudioBuffer, startReadIndex, result, 0, nSamples);
+        } else {
+            // I dati sono spezzati
+            System.arraycopy(circularAudioBuffer, startReadIndex, result, 0, spaceAtEnd);
+            System.arraycopy(circularAudioBuffer, 0, result, spaceAtEnd, nSamples - spaceAtEnd);
+        }
+        return result;
+    }
+
+    public int processOnnxInference() {
+        int processed = 0;
+
+        if (this.accumulated_samples >= 1280) {
+            // 1. Genera lo spettrogramma per i nuovi campioni
             this.streamingMelSpectrogram(this.accumulated_samples);
 
-            float[][][][] x = new float[1][76][32][1];
+            // 2. Calcola quanti nuovi blocchi di embedding dobbiamo generare
+            // Ogni blocco da 1280 campioni (80ms) produce esattamente 8 nuovi frame di spettrogramma
+            int numNewEmbeddingWindows = this.accumulated_samples / 1280;
 
-            for (int i = (accumulated_samples / 1280) - 1; i >= 0; i--) {
+            for (int i = 0; i < numNewEmbeddingWindows; i++) {
+                // Calcoliamo la posizione della finestra nel melspectrogramBuffer
+                // Vogliamo le ultime 76 righe terminando all'offset corrente
+                // L'offset si sposta di 8 righe per ogni blocco da 1280 campioni
+                int endNdx = melspectrogramBuffer.length - (numNewEmbeddingWindows - 1 - i) * 8;
+                int startNdx = endNdx - 76;
 
-                int ndx = -8 * i;
-                if (ndx == 0) {
-                    ndx = melspectrogramBuffer.length;
-                }
-                // Calculate start and end indices for slicing
-                int start = Math.max(0, ndx - 76);
-                int end = ndx;
+                if (startNdx >= 0) {
+                    float[][][][] inputTensorData = prepareEmbeddingInput(startNdx, endNdx);
 
-                for (int j = start, k = 0; j < end; j++, k++) {
-                    for (int w = 0; w < 32; w++) {
-                        x[0][k][w][0] = (float) melspectrogramBuffer[j][w];
-                    }
-                }
-                if (x[0].length== 76)
-                {
                     try {
-                        float[][] newFeatures=modelRunner.generateEmbeddings(x);
-                        if (featureBuffer == null) {
-                            featureBuffer = newFeatures;
-                        } else {
-                            int totalRows = featureBuffer.length + newFeatures.length;
-                            int numColumns = featureBuffer[0].length; // Assuming all rows have the same length
-                            float[][] updatedBuffer = new float[totalRows][numColumns];
-
-                            // Copy original featureBuffer into updatedBuffer
-                            for (int l = 0; l< featureBuffer.length; l++) {
-                                System.arraycopy(featureBuffer[l], 0, updatedBuffer[l], 0, featureBuffer[l].length);
-                            }
-
-                            // Copy newFeatures into the updatedBuffer, starting after the last original row
-                            for (int k = 0; k < newFeatures.length; k++) {
-                                System.arraycopy(newFeatures[k], 0, updatedBuffer[k + featureBuffer.length], 0, newFeatures[k].length);
-                            }
-
-                            featureBuffer = updatedBuffer;
-                        }
-
+                        float[][] newFeatures = modelRunner.generateEmbeddings(inputTensorData);
+                        appendFeatures(newFeatures);
                     } catch (Exception e) {
-                        throw new RuntimeException(e);
+                        Log.e("Model", "Errore generazione embedding", e);
                     }
                 }
             }
-            processed_samples=this.accumulated_samples;
-            this.accumulated_samples=0;
 
+            processed = this.accumulated_samples;
+            this.accumulated_samples = 0;
         }
-        if (featureBuffer.length > feature_buffer_max_len) {
-            float[][] trimmedFeatureBuffer = new float[feature_buffer_max_len][featureBuffer[0].length];
 
-            // Copy the last featureBufferMaxLen rows of featureBuffer into trimmedFeatureBuffer
-            for (int i = 0; i < feature_buffer_max_len; i++) {
-                trimmedFeatureBuffer[i] = featureBuffer[featureBuffer.length - feature_buffer_max_len + i];
+        trimFeatureBuffer();
+        return processed;
+    }
+
+    private float[][][][] prepareEmbeddingInput(int start, int end) {
+        // Il modello ONNX si aspetta [1][76][32][1]
+        float[][][][] input = new float[1][76][32][1];
+
+        for (int t = 0; t < 76; t++) {
+            // Copiamo l'intera riga di 32 valori mel-spec
+            // melspectrogramBuffer[start + t] è un float[32]
+            // Lo copiamo in input[0][t][...]
+            for (int m = 0; m < 32; m++) {
+                input[0][t][m][0] = melspectrogramBuffer[start + t][m];
             }
-
-            // Update featureBuffer to point to the new trimmedFeatureBuffer
-            featureBuffer = trimmedFeatureBuffer;
+            // Nota: Qui il System.arraycopy è difficile perché l'ultima dimensione è 1.
+            // Se il modello ONNX accettasse [1][76][32], sarebbe istantaneo.
+            // Manteniamo il ciclo interno ma abbiamo ottimizzato il calcolo degli indici.
         }
-        return processed_samples != 0 ? processed_samples : this.accumulated_samples;
-
-
-
+        return input;
     }
 
-    public String predict_WakeWord(float[] audiobuffer){
-
-        n_prepared_samples=this.streaming_features(audiobuffer);
-        float[][][] res=this.getFeatures(16,-1);
-        String result="";
-        try {
-            result=modelRunner.predictWakeWord(res);
-        } catch (OrtException e) {
-            throw new RuntimeException(e);
+    // Metodo helper per concatenare le matrici di embedding
+    private void appendFeatures(float[][] newFeatures) {
+        if (featureBuffer == null) {
+            featureBuffer = newFeatures;
+            return;
         }
-        return  result;
+
+        float[][] updatedBuffer = new float[featureBuffer.length + newFeatures.length][featureBuffer[0].length];
+
+        // Copia il vecchio buffer (riferimenti alle righe)
+        System.arraycopy(featureBuffer, 0, updatedBuffer, 0, featureBuffer.length);
+
+        // Copia i nuovi embedding (riferimenti alle righe)
+        System.arraycopy(newFeatures, 0, updatedBuffer, featureBuffer.length, newFeatures.length);
+
+        featureBuffer = updatedBuffer;
+    }
+
+    private void trimFeatureBuffer() {
+        if (featureBuffer != null && featureBuffer.length > feature_buffer_max_len) {
+            // Creiamo la nuova matrice (destinazione)
+            float[][] trimmed = new float[feature_buffer_max_len][featureBuffer[0].length];
+
+            // System.arraycopy(sorgente, posizione_sorgente, destinazione, posizione_destinazione, numero_elementi)
+            // Copiamo i riferimenti alle righe (molto più veloce del copia-valori)
+            System.arraycopy(
+                    featureBuffer,
+                    featureBuffer.length - feature_buffer_max_len,
+                    trimmed,
+                    0,
+                    feature_buffer_max_len
+            );
+
+            featureBuffer = trimmed;
         }
     }
 
+    public String predict_WakeWord(float[] audiobuffer) {
+        // 1. Aggiorna sempre i buffer audio grezzi e i resti (per mantenere il sync)
+        this.updateBuffers(audiobuffer);
+
+        // 2. Controllo Energia (RMS)
+        double rms = calculateRMS(audiobuffer);
+
+        // Gestione della soglia con Hangover (coda di mantenimento)
+        boolean isActive = false;
+        if (rms > ENERGY_THRESHOLD) {
+            lastActiveTime = System.currentTimeMillis();
+            isActive = true;
+        } else if (System.currentTimeMillis() - lastActiveTime < HANGOVER_MS) {
+            isActive = true;
+        }
+
+        String result = "0.00000"; // Valore di default (silenzio/nessun rilevamento)
+
+        if (isActive) {
+
+            // 3. Esegui la catena ONNX: Spettrogramma -> Embedding
+            // processed_samples sarà 1280 (o multipli) se un blocco è stato completato
+            int processed_samples = this.processOnnxInference();
+
+            // 4. Se abbiamo nuovi embedding pronti, eseguiamo la classificazione finale
+            if (processed_samples > 0) {
+                // Estraiamo gli ultimi 16 frame di embedding (la finestra temporale della wake word)
+                float[][][] features = this.getFeatures(16, -1);
+
+                try {
+                    result = modelRunner.predictWakeWord(features);
+                } catch (OrtException e) {
+                    Log.e("Model", "Errore predizione WakeWord", e);
+                }
+            }
+        } else {
+            // 5. SILENZIO PROLUNGATO: Scarichiamo l'accumulo per evitare che il
+            // contatore cresca all'infinito senza mai processare nulla
+            if (this.accumulated_samples >= 1280) {
+                this.accumulated_samples = 0;
+
+                // Opzionale: inseriamo un frame di "zero" per far scorrere il tempo nel modello
+                // Questo evita che "Hey" (silenzio lungo) "Nugget" venga visto come "HeyNugget"
+                pushSilentEmbedding();
+            }
+        }
+
+        return result;
+    }
+
+    // Metodo helper per mantenere la coerenza temporale durante il silenzio
+    private void pushSilentEmbedding() {
+        float[][] silent = new float[1][96]; // Assumendo 96 sia la dimensione dell'embedding
+        appendFeatures(silent);
+        trimFeatureBuffer();
+    }
+
+    private double calculateRMS(float[] buffer) {
+        double sum = 0;
+        for (float s : buffer) sum += s * s;
+        return Math.sqrt(sum / buffer.length);
+    }
+
+}
