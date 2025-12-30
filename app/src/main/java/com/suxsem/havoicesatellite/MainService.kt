@@ -1,7 +1,6 @@
 package com.suxsem.havoicesatellite
 
 import android.Manifest
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -10,32 +9,29 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.Bundle
 import android.os.IBinder
-import android.os.Looper
-import android.os.PowerManager
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
-import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import androidx.core.os.postDelayed
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import java.util.logging.Handler
-
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class MainService : Service() {
 
-    private var recorderThread: AudioRecorderThread? = null
-    private lateinit var speechRecognizer: SpeechRecognizer
-    private lateinit var overlay: SpeechOverlay
-
-    private val mainHandler = android.os.Handler(Looper.getMainLooper())
+    private val wakeWordDetector by lazy { AudioWakeWordDetector(this) }
+    private val conversation by lazy { Conversation(this) }
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var mainLoopJob: Job? = null
 
     override fun onCreate() {
 
@@ -100,117 +96,60 @@ class MainService : Service() {
 
         ServiceState.setRunning(true)
 
-        startListening()
+        mainLoopJob = serviceScope.launch {
+            while (isActive) {
+                val score = wakeWordDetector.waitForWakeWord()
+                conversation.chat()
 
-        overlay = SpeechOverlay(this)
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+                Log.d("WakeWordService", "Wake word detected con score=$score")
 
-        speechRecognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                overlay.show()
+                /*
+                if (ActivityCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    val notification = NotificationCompat.Builder(this, NOTIF_CHANNEL_DETECTED)
+                        .setContentTitle("WAKEWORD RILEVATA")
+                        .setContentText("WAKEWORD RILEVATA")
+                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .setAutoCancel(true)
+                        .build()
+
+                    val notificationManager = NotificationManagerCompat.from(this)
+                    val notificationId = (0..Int.MAX_VALUE).random() // id casuale per ogni notifica
+
+                    notificationManager.notify(notificationId, notification)
+                }
+                */
+
+                /*
+                // esempio: invio broadcast locale all’activity
+                val broadcast = Intent("WAKEWORD_DETECTED")
+                broadcast.putExtra("score", score)
+                LocalBroadcastManager.getInstance(this).sendBroadcast(broadcast)
+                 */
+
             }
-
-            override fun onRmsChanged(rmsdB: Float) {
-                // rmsdB è la potenza del suono, la usiamo per l'animazione
-                overlay.updateAmp(rmsdB)
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                val data = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                overlay.updateText(data?.get(0) ?: "")
-            }
-
-            override fun onResults(results: Bundle?) {
-                val data = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                overlay.updateText(data?.get(0) ?: "")
-                startListening()
-                mainHandler.postDelayed({ overlay.hide() }, 1000)
-            }
-
-            override fun onBeginningOfSpeech() {
-            }
-
-            override fun onBufferReceived(p0: ByteArray?) {
-            }
-
-            override fun onEndOfSpeech() {
-                //TODO
-            }
-
-            override fun onError(error: Int) {
-                overlay.hide()
-                startListening()
-            }
-            override fun onEvent(p0: Int, p1: Bundle?) {}
-        })
+        }
 
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        super.onDestroy()
-        recorderThread?.stopRecording()
-        recorderThread?.join()
-        recorderThread = null
+        serviceScope.cancel()
+        runBlocking {
+            mainLoopJob?.join()
+        }
+        wakeWordDetector.close()
         ServiceState.setRunning(false)
-    }
-
-    private fun startListening() {
-        recorderThread = AudioRecorderThread(this) { score ->
-            // ⚡ Sei in un thread di background
-            Log.d("WakeWordService", "Wake word detected con score=$score")
-
-            /*
-            if (ActivityCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                val notification = NotificationCompat.Builder(this, NOTIF_CHANNEL_DETECTED)
-                    .setContentTitle("WAKEWORD RILEVATA")
-                    .setContentText("WAKEWORD RILEVATA")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setPriority(NotificationCompat.PRIORITY_LOW)
-                    .setAutoCancel(true)
-                    .build()
-
-                val notificationManager = NotificationManagerCompat.from(this)
-                val notificationId = (0..Int.MAX_VALUE).random() // id casuale per ogni notifica
-
-                notificationManager.notify(notificationId, notification)
-            }
-            */
-
-            /*
-            // esempio: invio broadcast locale all’activity
-            val broadcast = Intent("WAKEWORD_DETECTED")
-            broadcast.putExtra("score", score)
-            LocalBroadcastManager.getInstance(this).sendBroadcast(broadcast)
-             */
-
-            recorderThread?.stopRecording()
-
-            mainHandler.post {
-                startSTT()
-            }
-
-        }
-
-        recorderThread?.start()
-    }
-
-    private fun startSTT() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        }
-        speechRecognizer.startListening(intent)
+        super.onDestroy()
     }
 
 }

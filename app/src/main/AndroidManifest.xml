@@ -28,6 +28,7 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
 
         <service
@@ -42,6 +43,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="com.suxsem.havoicesatellite.TEST_BOOT" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".ConversationReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.suxsem.havoicesatellite.START_CHAT" />
             </intent-filter>
         </receiver>
     </application>

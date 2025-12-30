@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
+import com.suxsem.havoicesatellite.ui.theme.ColorHomeAssistant
 
 class SpeechOverlay(private val context: Context) {
 
@@ -213,7 +214,7 @@ private fun SpeechOverlayUI(text: String, amplitude: Float) {
                 modifier = Modifier
                     .size(100.dp)
                     .graphicsLayer(scaleX = scale, scaleY = scale)
-                    .background(Color.Cyan, shape = CircleShape),
+                    .background(ColorHomeAssistant, shape = CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))

@@ -21,13 +21,13 @@ class ONNXModelRunner {
     private static final int BATCH_SIZE = 1; // Replace with your batch size
 
     AssetManager assetManager;
-    OrtSession hey_nugget_session;
+    OrtSession session;
     OrtEnvironment hey_nugget_env = OrtEnvironment.getEnvironment();
     public ONNXModelRunner(AssetManager assetManager) throws IOException, OrtException {
         this.assetManager=assetManager;
 
         try {
-            hey_nugget_session = hey_nugget_env.createSession(readModelFile(assetManager, "hey_veekee.onnx"));
+            session = hey_nugget_env.createSession(readModelFile(assetManager, "hey_veekee.onnx"));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -130,7 +130,7 @@ class ONNXModelRunner {
         try (OnnxTensor inputTensor = OnnxTensor.createTensor(hey_nugget_env, inputArray)) {
             // Create a tensor from the input array
             // Run the inference
-            OrtSession.Result outputs = hey_nugget_session.run(Collections.singletonMap(hey_nugget_session.getInputNames().iterator().next(), inputTensor));
+            OrtSession.Result outputs = session.run(Collections.singletonMap(session.getInputNames().iterator().next(), inputTensor));
             // Extract the output tensor, convert it to the desired type
             result = (float[][]) outputs.get(0).getValue();
             resultant = String.format(Locale.US, "%.5f", (double) result[0][0]);
@@ -149,6 +149,19 @@ class ONNXModelRunner {
         }
     }
 
+    public void close() {
+        try {
+            if (session != null) {
+                session.close();
+            }
+            if (hey_nugget_env != null) {
+                hey_nugget_env.close();
+            }
+        } catch (OrtException e) {
+            Log.e("ONNXModelRunner", "Errore durante la chiusura", e);
+        }
+    }
+
 }
 
 
@@ -158,12 +171,12 @@ public class Model {
 
     // Stato dell'Energy Gate
     private long lastActiveTime = 0;
-    private static final long HANGOVER_MS = 1000; // Mezzo secondo di coda
+    private static final long HANGOVER_MS = 1000;
 
     // Buffer audio circolari
-    private final float[] circularAudioBuffer = new float[sampleRate * 10]; // 10 secondi
+    private final float[] circularAudioBuffer = new float[sampleRate * 10];
     private int circularWriteIndex = 0;
-    private int totalSamplesInCircular = 0; // Per sapere quanto buffer è pieno
+    private int totalSamplesInCircular = 0;
     private float energyTreshold;
 
     int melspectrogramMaxLen = 10 * 97;
@@ -176,19 +189,36 @@ public class Model {
     int accumulated_samples = 0;
 
     Model(ONNXModelRunner modelRunner, float energyThreshold) {
-        melspectrogramBuffer = new float[76][32];
-        this.energyTreshold = energyThreshold;
-        for (float[] floats : melspectrogramBuffer) {
-            // Assign 1.0f to simulate numpy.ones
-            Arrays.fill(floats, 1.0f);
-        }
         this.modelRunner = modelRunner;
+        this.energyTreshold = energyThreshold;
+        reset(); // Inizializza i buffer usando il metodo reset
+    }
+
+    public void reset() {
+        // 1. Resetta buffer audio circolare
+        Arrays.fill(circularAudioBuffer, 0.0f);
+        circularWriteIndex = 0;
+        totalSamplesInCircular = 0;
+
+        // 2. Resetta melspectrogramBuffer (riempiamo di 1.0 come nel costruttore originale)
+        melspectrogramBuffer = new float[76][32];
+        for (float[] row : melspectrogramBuffer) {
+            Arrays.fill(row, 1.0f);
+        }
+
+        // 3. Resetta featureBuffer e altri contatori
+        featureBuffer = null;
+        accumulated_samples = 0;
+        raw_data_remainder = new float[0];
+        lastActiveTime = 0;
+
+        // 4. Ri-popola il featureBuffer con dati dummy per evitare null pointer
+        // e dare al modello uno stato "neutro" iniziale
         try {
             this.featureBuffer = this._getEmbeddings(this.generateRandomIntArray(16000 * 4), 76, 8);
         } catch (Exception e) {
-            System.out.print(e.getMessage());
+            Log.e("Model", "Errore durante il reset del featureBuffer: " + e.getMessage());
         }
-
     }
 
     public float[][][] getFeatures(int nFeatureFrames, int startNdx) {
@@ -545,4 +575,9 @@ public class Model {
         return Math.sqrt(sum / buffer.length);
     }
 
+    public void close() {
+        if (modelRunner != null) {
+            modelRunner.close();
+        }
+    }
 }
