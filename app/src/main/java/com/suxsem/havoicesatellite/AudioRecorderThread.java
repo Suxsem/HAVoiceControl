@@ -1,40 +1,43 @@
 package com.suxsem.havoicesatellite;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.os.Process;
 
+import java.io.IOException;
+
+import ai.onnxruntime.OrtException;
+
 public class AudioRecorderThread extends Thread {
-    private static final double MIN_SCORE = 0.20;
     private static final int COOLDOWN_MS = 3000;
     private static final int SAMPLE_RATE = 16000;
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
 
     private static final float INT16_NORMALIZATION_FACTOR = 1.0f / 32768.0f;
-
     private float currentGain = 1.0f;
     private static final float TARGET_RMS = 0.15f; // Il volume "ideale" che vogliamo raggiungere
-    private static final float MAX_GAIN = 10.0f;   // Non vogliamo amplificare il fruscio all'infinito
-    private static final float MIN_GAIN = 0.5f;    // Non vogliamo ammutolire il segnale
     private static final float ADAPTATION_SPEED = 0.05f; // Quanto velocemente cambia il gain
 
     private long lastWakeWordTime = 0L;
 
+    private final Context context;
+
     private AudioRecord audioRecord;
     private boolean isRecording = false;
 
-    private final Model model;
     private final WakeWordListener listener;
 
-    public AudioRecorderThread(Model model, WakeWordListener listener) {
-        this.model = model;
+    public AudioRecorderThread(Context context, WakeWordListener listener) {
+        this.context = context;
         this.listener = listener;
     }
 
-    public float[] applyAGCAndNormalize(short[] audioBuffer) {
+    public float[] applyAGCAndNormalize(short[] audioBuffer, float minGain, float maxGain) {
         float[] floatBuffer = new float[audioBuffer.length];
         double sumSq = 0;
 
@@ -56,7 +59,7 @@ public class AudioRecorderThread extends Thread {
             currentGain += (error - 1.0f) * ADAPTATION_SPEED;
 
             // Clamp del gain tra i valori min/max
-            currentGain = Math.max(MIN_GAIN, Math.min(MAX_GAIN, currentGain));
+            currentGain = Math.max(minGain, Math.min(maxGain, currentGain));
         }
 
         return floatBuffer;
@@ -66,6 +69,20 @@ public class AudioRecorderThread extends Thread {
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
+
+        SharedPreferences prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE);
+        float minScore = prefs.getFloat("min_score", 0);
+        float minGain = prefs.getFloat("min_gain", 0);
+        float maxGain = prefs.getFloat("max_gain", 0);
+        float energyTreshold = prefs.getFloat("energy_treshold", 0);
+
+        ONNXModelRunner modelRunner = null;
+        try {
+            modelRunner = new ONNXModelRunner(context.getAssets());
+        } catch (IOException | OrtException e) {
+            throw new RuntimeException(e);
+        }
+        var model = new Model(modelRunner, energyTreshold);
 
         int minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
         int bufferSizeInShorts = 1280;
@@ -91,13 +108,13 @@ public class AudioRecorderThread extends Thread {
             audioRecord.read(audioBuffer, 0, audioBuffer.length);
 
             // Converte, normalizza e aggiusta il volume tutto in un colpo solo
-            float[] floatBuffer = applyAGCAndNormalize(audioBuffer);
+            float[] floatBuffer = applyAGCAndNormalize(audioBuffer, minGain, maxGain);
 
             String res = model.predict_WakeWord(floatBuffer);
-            double score = Double.parseDouble(res);
+            float score = Float.parseFloat(res);
 
             long now = System.currentTimeMillis();
-            if (listener != null && score > MIN_SCORE && now - lastWakeWordTime >= COOLDOWN_MS) {
+            if (listener != null && score > minScore && now - lastWakeWordTime >= COOLDOWN_MS) {
                 listener.onWakeWordDetected(score);
                 lastWakeWordTime = now;
             }

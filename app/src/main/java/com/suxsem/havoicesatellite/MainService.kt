@@ -10,20 +10,32 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.os.postDelayed
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import java.util.logging.Handler
 
 
 class MainService : Service() {
 
     private var recorderThread: AudioRecorderThread? = null
+    private lateinit var speechRecognizer: SpeechRecognizer
+    private lateinit var overlay: SpeechOverlay
+
+    private val mainHandler = android.os.Handler(Looper.getMainLooper())
 
     override fun onCreate() {
 
@@ -88,13 +100,73 @@ class MainService : Service() {
 
         ServiceState.setRunning(true)
 
-        val modelRunner = ONNXModelRunner(assets)
-        val model = Model(modelRunner);
+        startListening()
 
-        recorderThread = AudioRecorderThread(model) { score ->
+        overlay = SpeechOverlay(this)
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                overlay.show()
+            }
+
+            override fun onRmsChanged(rmsdB: Float) {
+                // rmsdB è la potenza del suono, la usiamo per l'animazione
+                overlay.updateAmp(rmsdB)
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val data = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                overlay.updateText(data?.get(0) ?: "")
+            }
+
+            override fun onResults(results: Bundle?) {
+                val data = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                overlay.updateText(data?.get(0) ?: "")
+                startListening()
+                mainHandler.postDelayed({ overlay.hide() }, 1000)
+            }
+
+            override fun onBeginningOfSpeech() {
+            }
+
+            override fun onBufferReceived(p0: ByteArray?) {
+            }
+
+            override fun onEndOfSpeech() {
+                //TODO
+            }
+
+            override fun onError(error: Int) {
+                overlay.hide()
+                startListening()
+            }
+            override fun onEvent(p0: Int, p1: Bundle?) {}
+        })
+
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        super.onDestroy()
+        recorderThread?.stopRecording()
+        recorderThread?.join()
+        recorderThread = null
+        ServiceState.setRunning(false)
+    }
+
+    private fun startListening() {
+        recorderThread = AudioRecorderThread(this) { score ->
             // ⚡ Sei in un thread di background
             Log.d("WakeWordService", "Wake word detected con score=$score")
 
+            /*
             if (ActivityCompat.checkSelfPermission(
                     this,
                     Manifest.permission.POST_NOTIFICATIONS
@@ -113,6 +185,7 @@ class MainService : Service() {
 
                 notificationManager.notify(notificationId, notification)
             }
+            */
 
             /*
             // esempio: invio broadcast locale all’activity
@@ -120,26 +193,26 @@ class MainService : Service() {
             broadcast.putExtra("score", score)
             LocalBroadcastManager.getInstance(this).sendBroadcast(broadcast)
              */
+
+            recorderThread?.stopRecording()
+
+            mainHandler.post {
+                startSTT()
+            }
+
         }
 
         recorderThread?.start()
-
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-
-        return START_STICKY
+    private fun startSTT() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        speechRecognizer.startListening(intent)
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        super.onDestroy()
-        recorderThread?.stopRecording()
-        recorderThread?.join()
-        recorderThread = null
-        ServiceState.setRunning(false)
-    }
 }
 
 object ServiceState {

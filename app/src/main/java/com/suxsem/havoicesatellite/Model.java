@@ -27,7 +27,7 @@ class ONNXModelRunner {
         this.assetManager=assetManager;
 
         try {
-            hey_nugget_session = hey_nugget_env.createSession(readModelFile(assetManager, "hey_nugget_new.onnx"));
+            hey_nugget_session = hey_nugget_env.createSession(readModelFile(assetManager, "hey_veekee.onnx"));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -158,13 +158,13 @@ public class Model {
 
     // Stato dell'Energy Gate
     private long lastActiveTime = 0;
-    private static final long HANGOVER_MS = 500; // Mezzo secondo di coda
-    private static final float ENERGY_THRESHOLD = 0.01f; // Valore da calibrare
+    private static final long HANGOVER_MS = 1000; // Mezzo secondo di coda
 
     // Buffer audio circolari
     private final float[] circularAudioBuffer = new float[sampleRate * 10]; // 10 secondi
     private int circularWriteIndex = 0;
     private int totalSamplesInCircular = 0; // Per sapere quanto buffer è pieno
+    private float energyTreshold;
 
     int melspectrogramMaxLen = 10 * 97;
     int feature_buffer_max_len = 120;
@@ -175,19 +175,17 @@ public class Model {
     float[][] melspectrogramBuffer;
     int accumulated_samples = 0;
 
-    Model(ONNXModelRunner modelRunner) {
+    Model(ONNXModelRunner modelRunner, float energyThreshold) {
         melspectrogramBuffer = new float[76][32];
+        this.energyTreshold = energyThreshold;
         for (float[] floats : melspectrogramBuffer) {
             // Assign 1.0f to simulate numpy.ones
             Arrays.fill(floats, 1.0f);
         }
         this.modelRunner = modelRunner;
         try {
-
             this.featureBuffer = this._getEmbeddings(this.generateRandomIntArray(16000 * 4), 76, 8);
-
         } catch (Exception e) {
-
             System.out.print(e.getMessage());
         }
 
@@ -493,7 +491,7 @@ public class Model {
 
         // Gestione della soglia con Hangover (coda di mantenimento)
         boolean isActive = false;
-        if (rms > ENERGY_THRESHOLD) {
+        if (rms > energyTreshold) {
             lastActiveTime = System.currentTimeMillis();
             isActive = true;
         } else if (System.currentTimeMillis() - lastActiveTime < HANGOVER_MS) {
