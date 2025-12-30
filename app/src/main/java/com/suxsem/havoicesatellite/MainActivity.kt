@@ -232,10 +232,10 @@ class MyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        const val DEFAULT_MIN_SCORE = 0.2f
+        const val DEFAULT_MIN_SCORE = 0.25f
         const val DEFAULT_MIN_GAIN = 1f
-        const val DEFAULT_MAX_GAIN = 5f
-        const val DEFAULT_ENERGY_TRESHOLD = 0.1f
+        const val DEFAULT_MAX_GAIN = 4f
+        const val DEFAULT_ENERGY_TRESHOLD = 0.15f
     }
 
     private val _minScore = mutableFloatStateOf(prefs.getFloat("min_score", DEFAULT_MIN_SCORE))

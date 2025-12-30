@@ -28,10 +28,15 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.graphics.Point
+import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
+import android.widget.FrameLayout
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.ComposeView
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
@@ -41,6 +46,7 @@ class SpeechOverlay(private val context: Context) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var composeView: ComposeView? = null
+    private var wrapperView: MyView? = null
 
     // Gestore per il ViewModelStore (può essere lo stesso per sempre)
     private val globalViewModelStore = ViewModelStore()
@@ -91,8 +97,8 @@ class SpeechOverlay(private val context: Context) {
         */
 
         val params = WindowManager.LayoutParams().apply {
-            width = WindowManager.LayoutParams.MATCH_PARENT
-            height = WindowManager.LayoutParams.MATCH_PARENT
+            width = WindowManager.LayoutParams.WRAP_CONTENT
+            height = WindowManager.LayoutParams.WRAP_CONTENT
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 
             // Configurazione Flag
@@ -100,31 +106,41 @@ class SpeechOverlay(private val context: Context) {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN or
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
 
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                @Suppress("DEPRECATION")
+                flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
+            }
+
             format = PixelFormat.TRANSLUCENT
 
-            // Usa Gravity.FILL per forzare l'occupazione di tutto lo spazio
-            gravity = Gravity.FILL
+            gravity = Gravity.START or Gravity.TOP
 
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
 
         composeView = ComposeView(context).apply {
-            // 2. COLLEGIAMO L'OGGETTO SESSIONE ALLA VIEW
-            setViewTreeLifecycleOwner(sessionOwner)
-            setViewTreeViewModelStoreOwner(sessionOwner)
-            setViewTreeSavedStateRegistryOwner(sessionOwner)
             currentText = LISTENING_LABEL
             currentAmplitude = 0f
             updateContent()
         }
 
-        // 3. AVVIAMO IL CICLO DI VITA
+        wrapperView = MyView(context).apply {
+            setViewTreeViewModelStoreOwner(sessionOwner)
+            setViewTreeSavedStateRegistryOwner(sessionOwner)
+            setViewTreeLifecycleOwner(sessionOwner)
+            addView(composeView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+        }
+
         sessionOwner.start()
 
-        windowManager.addView(composeView, params)
+        windowManager.addView(wrapperView, params)
     }
 
     fun updateText(text: String) {
@@ -142,7 +158,7 @@ class SpeechOverlay(private val context: Context) {
     }
 
     fun hide() {
-        composeView?.let { view ->
+        wrapperView?.let { view ->
             // 4. RECUPERIAMO IL PROPRIETARIO E LO FERMIAMO
             view.findViewTreeLifecycleOwner()?.let {
                 val registry = it.lifecycle as? LifecycleRegistry
@@ -154,6 +170,30 @@ class SpeechOverlay(private val context: Context) {
             windowManager.removeView(view)
             composeView = null
         }
+    }
+}
+
+class MyView(context: Context) : FrameLayout(context) {
+
+    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val point = Point()
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+
+        val screenSize = point.also {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = windowManager.currentWindowMetrics.bounds
+                it.set(bounds.width(), bounds.height())
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealSize(it)
+            }
+        }
+
+        super.onMeasure(
+            MeasureSpec.makeMeasureSpec(screenSize.x, MeasureSpec.getMode(widthMeasureSpec)),
+            MeasureSpec.makeMeasureSpec(screenSize.y, MeasureSpec.getMode(heightMeasureSpec))
+        )
     }
 }
 
@@ -176,7 +216,7 @@ private fun SpeechOverlayUI(text: String, amplitude: Float) {
                     .background(Color.Cyan, shape = CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Face, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
+                Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
             }
 
             Spacer(modifier = Modifier.height(50.dp))
