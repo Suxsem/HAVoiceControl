@@ -98,7 +98,9 @@ class MainService : Service() {
 
         mainLoopJob = serviceScope.launch {
             while (isActive) {
+
                 val score = wakeWordDetector.waitForWakeWord()
+
                 conversation.chat()
 
                 Log.d("WakeWordService", "Wake word detected con score=$score")
@@ -124,7 +126,7 @@ class MainService : Service() {
                 }
                 */
 
-                /*
+                    /*
                 // esempio: invio broadcast locale all’activity
                 val broadcast = Intent("WAKEWORD_DETECTED")
                 broadcast.putExtra("score", score)
@@ -132,6 +134,10 @@ class MainService : Service() {
                  */
 
             }
+        }
+
+        mainLoopJob!!.invokeOnCompletion {
+            wakeWordDetector.close()
         }
 
     }
@@ -144,10 +150,7 @@ class MainService : Service() {
 
     override fun onDestroy() {
         serviceScope.cancel()
-        runBlocking {
-            mainLoopJob?.join()
-        }
-        wakeWordDetector.close()
+
         ServiceState.setRunning(false)
         super.onDestroy()
     }

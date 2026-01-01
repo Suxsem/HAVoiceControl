@@ -9,6 +9,7 @@ import android.os.Process
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlin.math.sqrt
 
 class AudioWakeWordDetector(context: Context) {
 
@@ -95,6 +96,7 @@ class AudioWakeWordDetector(context: Context) {
             audioRecord.release()
             model.reset()
         }
+
     }
 
     private fun applyAGCAndNormalize(audioBuffer: ShortArray): FloatArray {
@@ -104,7 +106,7 @@ class AudioWakeWordDetector(context: Context) {
             floatBuffer[i] = (audioBuffer[i] * INT16_NORMALIZATION_FACTOR) * currentGain
             sumSq += (floatBuffer[i] * floatBuffer[i]).toDouble()
         }
-        val rms = Math.sqrt(sumSq / audioBuffer.size).toFloat()
+        val rms = sqrt(sumSq / audioBuffer.size).toFloat()
         if (rms > 0.001f) {
             val error = TARGET_RMS / rms
             currentGain += (error - 1.0f) * ADAPTATION_SPEED

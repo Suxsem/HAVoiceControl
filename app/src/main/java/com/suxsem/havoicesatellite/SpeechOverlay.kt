@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Face
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,10 +32,12 @@ import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.ui.platform.AbstractComposeView
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
@@ -49,11 +50,14 @@ class SpeechOverlay(private val context: Context) {
     private var composeView: ComposeView? = null
     private var wrapperView: MyView? = null
 
+    var onDismissListener: (() -> Unit)? = null
+
     // Gestore per il ViewModelStore (può essere lo stesso per sempre)
     private val globalViewModelStore = ViewModelStore()
 
     private var currentText = ""
     private var currentAmplitude = 0f
+    private var isTalking = false
 
     fun show() {
         if (composeView != null) {
@@ -126,6 +130,7 @@ class SpeechOverlay(private val context: Context) {
         composeView = ComposeView(context).apply {
             currentText = LISTENING_LABEL
             currentAmplitude = 0f
+            isTalking = false
             updateContent()
         }
 
@@ -154,8 +159,17 @@ class SpeechOverlay(private val context: Context) {
         updateContent()
     }
 
+    fun updateIsTalking(isTalking: Boolean) {
+        this.isTalking = isTalking
+        updateContent()
+    }
+
+    fun onDmississ() {
+
+    }
+
     private fun updateContent() {
-        composeView?.setContent { SpeechOverlayUI(currentText, currentAmplitude) }
+        composeView?.setContent { SpeechOverlayUI(currentText, currentAmplitude, isTalking, onDismissListener) }
     }
 
     fun hide() {
@@ -199,12 +213,22 @@ class MyView(context: Context) : FrameLayout(context) {
 }
 
 @Composable
-private fun SpeechOverlayUI(text: String, amplitude: Float) {
+private fun SpeechOverlayUI(
+    text: String,
+    amplitude: Float,
+    isTalking: Boolean,
+    onDismiss: (() -> Unit)?
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets(0)) // Forza a ignorare padding automatici
-            .background(Color.Black.copy(alpha = 0.7f)),
+            .background(Color.Black.copy(alpha = 0.7f))
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    onDismiss?.invoke()
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -217,7 +241,7 @@ private fun SpeechOverlayUI(text: String, amplitude: Float) {
                     .background(ColorHomeAssistant, shape = CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
+                Icon(if (isTalking) Icons.Default.Home else Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
             }
 
             Spacer(modifier = Modifier.height(50.dp))

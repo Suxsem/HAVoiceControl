@@ -47,6 +47,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Check
@@ -58,6 +59,7 @@ import androidx.compose.runtime.livedata.observeAsState
 import com.suxsem.havoicesatellite.ui.theme.HAVoiceSatelliteTheme
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import kotlin.math.min
 import kotlin.math.round
@@ -277,25 +279,52 @@ class MyViewModel(application: Application) : AndroidViewModel(application) {
         setMaxGain(DEFAULT_MAX_GAIN)
     }
 
-    private val _energyTreshold =
-        mutableFloatStateOf(prefs.getFloat("energy_treshold", DEFAULT_ENERGY_TRESHOLD))
-    val energyTreshold: State<Float> = _energyTreshold
+    private val _energyThreshold =
+        mutableFloatStateOf(prefs.getFloat("energy_threshold", DEFAULT_ENERGY_TRESHOLD))
+    val energyThreshold: State<Float> = _energyThreshold
 
-    fun setEnergyTreshold(newValue: Float) {
+    fun setEnergyThreshold(newValue: Float) {
         val roundedValue = round(newValue * 100f) / 100.0f
-        _energyTreshold.floatValue = roundedValue
-        prefs.edit { putFloat("energy_treshold", roundedValue) }
+        _energyThreshold.floatValue = roundedValue
+        prefs.edit { putFloat("energy_threshold", roundedValue) }
     }
 
-    fun resetEnergyTreshold() {
-        setEnergyTreshold(DEFAULT_ENERGY_TRESHOLD)
+    fun resetEnergyThreshold() {
+        setEnergyThreshold(DEFAULT_ENERGY_TRESHOLD)
+    }
+
+    private val _haHost = mutableStateOf<String?>(prefs.getString("ha_host", null))
+    val haHost: State<String?> = _haHost
+
+    fun setHaHost(newValue: String?) {
+        _haHost.value = newValue
+        prefs.edit { putString("ha_host", newValue) }
+    }
+
+    private val _haPort = mutableStateOf<String?>(prefs.getString("ha_port", null))
+    val haPort: State<String?> = _haPort
+
+    fun setHaPort(newValue: String?) {
+        _haPort.value = newValue
+        prefs.edit { putString("ha_port", newValue) }
+    }
+
+    private val _haToken = mutableStateOf<String?>(prefs.getString("ha_token", null))
+    val haToken: State<String?> = _haToken
+
+    fun setHaToken(newValue: String?) {
+        _haToken.value = newValue
+        prefs.edit { putString("ha_token", newValue) }
     }
 
     fun setPrefs() {
         setMinScore(_minScore.floatValue)
         setMinGain(_minGain.floatValue)
         setMaxGain(_maxGain.floatValue)
-        setEnergyTreshold(_energyTreshold.floatValue)
+        setEnergyThreshold(_energyThreshold.floatValue)
+        setHaHost(_haHost.value)
+        setHaPort(_haPort.value)
+        setHaToken(_haToken.value)
     }
 }
 
@@ -351,7 +380,10 @@ fun MainUI(viewModel: MyViewModel, activity: Activity) {
     val minScore by viewModel.minScore
     val minGain by viewModel.minGain
     val maxGain by viewModel.maxGain
-    val energyTreshold by viewModel.energyTreshold
+    val energyThreshold by viewModel.energyThreshold
+    val haHost by viewModel.haHost
+    val haPort by viewModel.haPort
+    val haToken by viewModel.haToken
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -367,6 +399,30 @@ fun MainUI(viewModel: MyViewModel, activity: Activity) {
             RequirementsPanel(
                 activity = activity,
                 requirements = viewModel.requirements,
+            )
+
+            TextParamEditor(
+                enabled = !isRunning,
+                value = haHost,
+                label = "Home Assistant URL",
+                onValueChange = viewModel::setHaHost,
+                inputType = InputType.URL
+            )
+
+            TextParamEditor(
+                enabled = !isRunning,
+                value = haPort,
+                label = "Home Assistant Port Number",
+                onValueChange = viewModel::setHaPort,
+                inputType = InputType.NUMBER
+            )
+
+            TextParamEditor(
+                enabled = !isRunning,
+                value = haToken,
+                label = "Home Assistant Auth Token",
+                onValueChange = viewModel::setHaToken,
+                inputType = InputType.TEXT
             )
 
             ParamSelector(
@@ -398,10 +454,10 @@ fun MainUI(viewModel: MyViewModel, activity: Activity) {
 
             ParamSelector(
                 enabled = !isRunning,
-                value = energyTreshold,
-                label = "Energy Treshold",
-                onValueChange = viewModel::setEnergyTreshold,
-                onReset = viewModel::resetEnergyTreshold,
+                value = energyThreshold,
+                label = "Energy Threshold",
+                onValueChange = viewModel::setEnergyThreshold,
+                onReset = viewModel::resetEnergyThreshold,
                 range = 0f..1f
             )
 
@@ -415,7 +471,11 @@ fun MainUI(viewModel: MyViewModel, activity: Activity) {
                         activity,
                         Intent(activity, MainService::class.java)
                     )
-                }, enabled = allMet && !isRunning) {
+                }, enabled = allMet &&
+                        haHost?.isNotEmpty() == true &&
+                        haPort?.isNotEmpty() == true &&
+                        haToken?.isNotEmpty() == true &&
+                        !isRunning) {
                     Text("Start")
                 }
 
@@ -514,5 +574,64 @@ fun ParamSelector(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
             )
         }
+    }
+}
+
+enum class InputType {
+    TEXT,
+    NUMBER,
+    URL
+}
+
+@Composable
+fun TextParamEditor(
+    enabled: Boolean = true,
+    value: String?,
+    label: String,
+    inputType: InputType = InputType.TEXT,
+    onValueChange: (String) -> Unit,
+) {
+    var currentText by remember(value) { mutableStateOf(value) }
+
+    val keyboardOptions = when (inputType) {
+        InputType.NUMBER -> KeyboardOptions(
+            keyboardType = KeyboardType.Number,
+            imeAction = ImeAction.Done
+        )
+        InputType.URL -> KeyboardOptions(
+            keyboardType = KeyboardType.Uri,
+            imeAction = ImeAction.Go
+        )
+        InputType.TEXT -> KeyboardOptions(
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Done
+        )
+    }
+
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp)) {
+
+        Text(text = label)
+
+        OutlinedTextField(
+            value = currentText ?: "",
+            onValueChange = { newValue ->
+                // Filtro per il tipo NUMBER: accetta solo cifre
+                val filteredValue = if (inputType == InputType.NUMBER) {
+                    newValue.filter { it.isDigit() }
+                } else {
+                    newValue
+                }
+
+                currentText = filteredValue
+                onValueChange(filteredValue)
+            },
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = keyboardOptions,
+            shape = RoundedCornerShape(12.dp),
+        )
     }
 }
