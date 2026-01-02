@@ -222,32 +222,27 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Used in this application for wake word detection:
 
-## dscripka/openWakeWord
+- ## dscripka/openWakeWord
 
-License: Apache License 2.0
+  License: Apache License 2.0
 
----
 
-## hasanatlodhi/OpenwakewordforAndroid
-
-License: Apache License 2.0
-
-This project is based on the original Python implementation by dscripka:
-https://github.com/dscripka/openWakeWord/
-
-Copyright © 2025 Hasanat Ahmed Lodhi
-
-Licensed under the Apache License, Version 2.0.
-
----
-
-## google/speech-embedding
-
-License: Apache License 2.0
-
----
-
-## qiuqiangkong/torchlibrosa
-
-License: MIT License
+- ## hasanatlodhi/OpenwakewordforAndroid
+  
+  License: Apache License 2.0
+  
+  This project is based on the original Python implementation by dscripka:
+  https://github.com/dscripka/openWakeWord/
+  
+  Copyright © 2025 Hasanat Ahmed Lodhi
+  
+  Licensed under the Apache License, Version 2.0.
+  
+- ## google/speech-embedding
+  
+  License: Apache License 2.0
+  
+- ## qiuqiangkong/torchlibrosa
+  
+  License: MIT License
 
