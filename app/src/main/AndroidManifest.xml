@@ -19,7 +19,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HAVoiceSatellite">
+        android:theme="@style/Theme.HAVoiceControl">
         <activity
             android:name=".ConversationLauncher"
             android:theme="@android:style/Theme.NoDisplay"
@@ -29,14 +29,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="com.suxsem.havoicesatellite"
+                    android:scheme="havoicecontrol"
                     android:host="start_chat" />
             </intent-filter>
         </activity>
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.HAVoiceSatellite">
+            android:theme="@style/Theme.HAVoiceControl">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -56,7 +56,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="com.suxsem.havoicesatellite.TEST_BOOT" />
+                <action android:name="havoicecontrol.TEST_BOOT" />
             </intent-filter>
         </receiver>
         <receiver
@@ -64,7 +64,7 @@
             android:enabled="true"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.suxsem.havoicesatellite.START_CHAT" />
+                <action android:name="havoicecontrol.START_CHAT" />
             </intent-filter>
         </receiver>
     </application>

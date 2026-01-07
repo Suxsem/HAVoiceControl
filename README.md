@@ -1,3 +1,7 @@
+![Log](/docs/logo.png){ width="1024" height="1024" style="display: block; margin: 0 auto" }
+
+# Voice Control for Home Assistant
+
 Used in this application for wake word detection:
 
 https://github.com/dscripka/openWakeWord

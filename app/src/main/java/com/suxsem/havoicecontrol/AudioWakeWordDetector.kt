@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite
+package com.suxsem.havoicecontrol
 
 import android.annotation.SuppressLint
 import android.content.Context

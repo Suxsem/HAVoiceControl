@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite.ui.theme
+package com.suxsem.havoicecontrol.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

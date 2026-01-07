@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite
+package com.suxsem.havoicecontrol
 
 import android.content.Context
 import android.speech.tts.TextToSpeech

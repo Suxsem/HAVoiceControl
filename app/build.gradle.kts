@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.suxsem.havoicesatellite"
+    namespace = "com.suxsem.havoicecontrol"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.suxsem.havoicesatellite"
+        applicationId = "com.suxsem.havoicecontrol"
         minSdk = 29
         targetSdk = 36
         versionCode = 1
@@ -22,7 +22,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

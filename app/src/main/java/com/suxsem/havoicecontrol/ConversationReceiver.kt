@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite
+package com.suxsem.havoicecontrol
 
 import android.content.BroadcastReceiver
 import android.content.Context

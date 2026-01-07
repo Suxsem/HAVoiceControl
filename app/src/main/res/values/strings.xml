@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">HA Voice Satellite</string>
-    <string name="fgs_justification">HA Voice Satellite main Service</string>
+    <string name="app_name">HA Voice Control</string>
+    <string name="fgs_justification">HA Voice Control main Service</string>
 </resources>

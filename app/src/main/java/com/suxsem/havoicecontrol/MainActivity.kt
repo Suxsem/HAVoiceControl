@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite
+package com.suxsem.havoicecontrol
 
 import android.Manifest
 import android.app.Activity
@@ -8,7 +8,6 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -56,12 +55,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.livedata.observeAsState
-import com.suxsem.havoicesatellite.ui.theme.HAVoiceSatelliteTheme
+import com.suxsem.havoicecontrol.ui.theme.HAVoiceControlTheme
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import kotlin.math.min
 import kotlin.math.round
 import androidx.core.net.toUri
 
@@ -79,7 +77,7 @@ class MainActivity : ComponentActivity() {
         viewModel.setPrefs()
 
         setContent {
-            HAVoiceSatelliteTheme {
+            HAVoiceControlTheme {
                 MainUI(viewModel, activity)
             }
         }

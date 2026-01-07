@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite
+package com.suxsem.havoicecontrol
 
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -6,12 +6,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
-        if (action == Intent.ACTION_BOOT_COMPLETED || action == "com.suxsem.havoicesatellite.TEST_BOOT") {
+        if (action == Intent.ACTION_BOOT_COMPLETED || action == "com.suxsem.havoicecontrol.TEST_BOOT") {
 
             val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
             if (prefs.getBoolean("auto_start", false)) {
@@ -37,7 +36,7 @@ class BootReceiver : BroadcastReceiver() {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         val notification = NotificationCompat.Builder(context, NOTIF_CHANNEL_STANDARD)
-            .setContentTitle("HA Voice Satellite Ready")
+            .setContentTitle("HA Voice Control Ready")
             .setContentText("Tap to start the background service")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

@@ -1,4 +1,4 @@
-package com.suxsem.havoicesatellite
+package com.suxsem.havoicecontrol
 
 import android.Manifest
 import android.app.NotificationManager
@@ -24,7 +24,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 class MainService : Service() {
 
@@ -73,7 +72,7 @@ class MainService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, NOTIF_CHANNEL_PERSISTENT)
-            .setContentTitle("HA Voice Satellite")
+            .setContentTitle("HA Voice Control")
             .setContentText("Service running")
             //.setSmallIcon(R.drawable.ic_service) // usa la tua icona
             .setSmallIcon(R.drawable.ic_launcher_foreground)
