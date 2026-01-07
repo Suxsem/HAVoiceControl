@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">HA Voice Control</string>
-    <string name="fgs_justification">HA Voice Control main Service</string>
+    <string name="app_name">Voice Control for Home Assistant</string>
+    <string name="fgs_justification">Voice Control for Home Assistant main Service</string>
 </resources>

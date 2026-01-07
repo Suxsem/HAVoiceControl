@@ -36,7 +36,7 @@ class BootReceiver : BroadcastReceiver() {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         val notification = NotificationCompat.Builder(context, NOTIF_CHANNEL_STANDARD)
-            .setContentTitle("HA Voice Control Ready")
+            .setContentTitle("Voice Control for Home Assistant")
             .setContentText("Tap to start the background service")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

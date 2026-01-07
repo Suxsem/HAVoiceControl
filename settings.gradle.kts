@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HA Voice Control"
+rootProject.name = "Voice Control for Home Assistant"
 include(":app")

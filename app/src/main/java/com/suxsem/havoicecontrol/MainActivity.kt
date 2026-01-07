@@ -60,6 +60,9 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import kotlin.math.round
 import androidx.core.net.toUri
 
@@ -87,6 +90,26 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refresh()
+    }
+
+    fun createLauncherShortcut() {
+        val shortcutId = "conversation_launcher_shortcut"
+
+        // Intent che avvia l'activity desiderata
+        val shortcutIntent = Intent(this, ConversationLauncher::class.java).apply {
+            action = Intent.ACTION_VIEW
+        }
+
+        val shortcut = ShortcutInfoCompat.Builder(this, shortcutId)
+            .setShortLabel("Listen")
+            .setLongLabel("Listen")
+            .setIcon(IconCompat.createWithResource(this, R.mipmap.listen))
+            .setIntent(shortcutIntent)
+            .build()
+
+        if (ShortcutManagerCompat.isRequestPinShortcutSupported(this)) {
+            ShortcutManagerCompat.requestPinShortcut(this, shortcut, null)
+        }
     }
 
     fun createNotificationsChannels() {
@@ -369,7 +392,7 @@ fun RequirementRow(activity: Activity, req: Requirement) {
 }
 
 @Composable
-fun MainUI(viewModel: MyViewModel, activity: Activity) {
+fun MainUI(viewModel: MyViewModel, activity: MainActivity) {
 
     val allMet = viewModel.requirements.all { it.isMet }
     val isRunning by ServiceState.isRunning.observeAsState(false)
@@ -504,6 +527,13 @@ fun MainUI(viewModel: MyViewModel, activity: Activity) {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Start on Boot")
+            }
+
+            Button(
+                onClick = { activity.createLauncherShortcut() },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) {
+                Text("Add Listen Shortcut to Home")
             }
         }
     }
