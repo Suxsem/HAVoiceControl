@@ -1,6 +1,8 @@
-package com.suxsem.havoicesatellite.ui.theme
+package com.suxsem.havoicecontrol.ui.theme
 
 import androidx.compose.ui.graphics.Color
+
+var ColorHomeAssistant = Color(0xFF18BCF2)
 
 val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)

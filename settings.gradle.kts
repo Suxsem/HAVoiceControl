@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HA Voice Satellite"
+rootProject.name = "HA Voice Control"
 include(":app")
