@@ -222,7 +222,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Used in this application for wake word detection:
 
-## dscripka/openWakeWord
+- ## dscripka/openWakeWord
 
   License: Apache License 2.0
 

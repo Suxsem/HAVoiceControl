@@ -1,4 +1,6 @@
-![Log](/docs/logo.png){ width="1024" height="1024" style="display: block; margin: 0 auto" }
+<p align="center">
+  <img src="/docs/logo.png" alt="logo" />
+</p>
 
 # Voice Control for Home Assistant
 
