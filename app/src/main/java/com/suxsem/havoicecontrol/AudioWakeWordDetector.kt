@@ -45,7 +45,7 @@ class AudioWakeWordDetector(context: Context) {
         minScore = prefs.getFloat("min_score", 0f)
         minGain = prefs.getFloat("min_gain", 0f)
         maxGain = prefs.getFloat("max_gain", 0f)
-        val energyThreshold = prefs.getFloat("energy_treshold", 0f)
+        val energyThreshold = prefs.getFloat("energy_threshold", 0f)
 
         // 2. Inizializziamo il modello
         model = Model(modelRunner, energyThreshold)

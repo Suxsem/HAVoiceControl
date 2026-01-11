@@ -27,6 +27,8 @@ class ONNXModelRunner {
         this.assetManager=assetManager;
 
         try {
+            //alexa: score 0.6, min 1, max 4, th 0.1, comunque tanti falsi positivi
+            //hey_veeke: score 0.6, min 1, max 4.5, th 0.1
             session = hey_nugget_env.createSession(readModelFile(assetManager, "hey_veekee.onnx"));
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -177,7 +179,7 @@ public class Model {
     private final float[] circularAudioBuffer = new float[sampleRate * 10];
     private int circularWriteIndex = 0;
     private int totalSamplesInCircular = 0;
-    private float energyTreshold;
+    private final float energyThreshold;
 
     int melspectrogramMaxLen = 10 * 97;
     int feature_buffer_max_len = 120;
@@ -190,7 +192,7 @@ public class Model {
 
     Model(ONNXModelRunner modelRunner, float energyThreshold) {
         this.modelRunner = modelRunner;
-        this.energyTreshold = energyThreshold;
+        this.energyThreshold = energyThreshold;
         reset(); // Inizializza i buffer usando il metodo reset
     }
 
@@ -518,10 +520,9 @@ public class Model {
 
         // 2. Controllo Energia (RMS)
         double rms = calculateRMS(audiobuffer);
-
         // Gestione della soglia con Hangover (coda di mantenimento)
         boolean isActive = false;
-        if (rms > energyTreshold) {
+        if (rms > energyThreshold) {
             lastActiveTime = System.currentTimeMillis();
             isActive = true;
         } else if (System.currentTimeMillis() - lastActiveTime < HANGOVER_MS) {

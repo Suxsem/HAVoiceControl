@@ -172,6 +172,57 @@ class SpeechOverlay(private val context: Context) {
             composeView = null
         }
     }
+
+    @Composable
+    private fun SpeechOverlayUI(
+        text: String,
+        amplitude: Float,
+        isTalking: Boolean,
+        onDismiss: (() -> Unit)?
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets(0)) // Forza a ignorare padding automatici
+                .background(Color.Black.copy(alpha = 0.7f))
+                .pointerInput(Unit) {
+                    detectTapGestures {
+                        onDismiss?.invoke()
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Animazione Microfono (Semplice cerchio che pulsa)
+                val scale by animateFloatAsState(targetValue = 1f + (amplitude / 10f))
+                Box(
+                    modifier = Modifier
+                        .size(100.dp)
+                        .graphicsLayer(scaleX = scale, scaleY = scale)
+                        .background(ColorHomeAssistant, shape = CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (isTalking) Icons.Default.Home else Icons.Default.Mic,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(50.dp))
+
+                // Testo Riconosciuto
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(24.dp)
+                )
+            }
+        }
+    }
 }
 
 class MyView(context: Context) : FrameLayout(context) {
@@ -196,50 +247,5 @@ class MyView(context: Context) : FrameLayout(context) {
             MeasureSpec.makeMeasureSpec(screenSize.y, MeasureSpec.getMode(heightMeasureSpec))
         )
     }
-}
 
-@Composable
-private fun SpeechOverlayUI(
-    text: String,
-    amplitude: Float,
-    isTalking: Boolean,
-    onDismiss: (() -> Unit)?
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets(0)) // Forza a ignorare padding automatici
-            .background(Color.Black.copy(alpha = 0.7f))
-            .pointerInput(Unit) {
-                detectTapGestures {
-                    onDismiss?.invoke()
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // Animazione Microfono (Semplice cerchio che pulsa)
-            val scale by animateFloatAsState(targetValue = 1f + (amplitude / 10f))
-            Box(
-                modifier = Modifier
-                    .size(100.dp)
-                    .graphicsLayer(scaleX = scale, scaleY = scale)
-                    .background(ColorHomeAssistant, shape = CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(if (isTalking) Icons.Default.Home else Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
-            }
-
-            Spacer(modifier = Modifier.height(50.dp))
-
-            // Testo Riconosciuto
-            Text(
-                text = text,
-                style = MaterialTheme.typography.headlineLarge,
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(24.dp)
-            )
-        }
-    }
 }

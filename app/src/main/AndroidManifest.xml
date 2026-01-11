@@ -21,6 +21,20 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HAVoiceControl">
         <activity
+            android:name=".ConversationLauncher2"
+            android:theme="@style/Theme.HAVoiceControl.Overlay"
+            android:launchMode="singleInstance"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="havoicecontrol"
+                    android:host="start_chat" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".ConversationLauncher"
             android:theme="@android:style/Theme.NoDisplay"
             android:launchMode="singleInstance"
@@ -50,7 +64,18 @@
             android:name=".MainService"
             android:exported="false"
             android:foregroundServiceType="microphone|mediaPlayback" />
-
+        <service
+            android:name=".QSTileService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:icon="@drawable/quicksettings_tile_icon"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

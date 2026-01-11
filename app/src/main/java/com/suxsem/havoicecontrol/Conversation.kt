@@ -11,8 +11,19 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+object ConversationEvents {
+    private val _dismiss = MutableSharedFlow<Unit>()
+    val dismiss = _dismiss.asSharedFlow()
+
+    suspend fun notifyDismiss() {
+        _dismiss.emit(Unit)
+    }
+}
 
 class Conversation (private val context: Context){
 
@@ -25,8 +36,10 @@ class Conversation (private val context: Context){
     private var conversationId: String? = null
 
     init {
-        overlay.onDismissListener = {
-            speechRecognizer?.cancel()
+        scope.launch {
+            ConversationEvents.dismiss.collect {
+                speechRecognizer?.cancel()
+            }
         }
     }
 
