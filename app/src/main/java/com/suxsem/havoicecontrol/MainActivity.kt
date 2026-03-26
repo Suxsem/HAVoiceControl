@@ -14,12 +14,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -55,16 +55,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Copyright
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.livedata.observeAsState
 import com.suxsem.havoicecontrol.ui.theme.HAVoiceControlTheme
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.content.pm.ShortcutInfoCompat
@@ -101,7 +111,7 @@ class MainActivity : ComponentActivity() {
 
     fun createLauncherShortcut(label: String) {
         val shortcutId = "shortcut_${label.hashCode()}"
-        val shortcutIntent = Intent(this, ConversationLauncher::class.java).apply {
+        val shortcutIntent = Intent(this, ConversationActivity::class.java).apply {
             action = Intent.ACTION_VIEW
         }
 
@@ -270,12 +280,21 @@ class MainActivity : ComponentActivity() {
         }
 
         private val prefs = application.getSharedPreferences("prefs", Context.MODE_PRIVATE)
-        private val _checked = mutableStateOf(prefs.getBoolean("auto_start", false))
-        val autoStart: State<Boolean> = _checked
+        private val _autoStart = mutableStateOf(prefs.getBoolean("auto_start", false))
+        val autoStart: State<Boolean> = _autoStart
 
         fun setAutoStart(newValue: Boolean) {
-            _checked.value = newValue
+            _autoStart.value = newValue
             prefs.edit { putBoolean("auto_start", newValue) }
+        }
+
+        private val _secured = mutableStateOf(prefs.getBoolean("secured", true))
+
+        val secured: State<Boolean> = _secured
+
+        fun setSecured(newValue: Boolean) {
+            _secured.value = newValue
+            prefs.edit { putBoolean("secured", newValue) }
         }
 
         companion object {
@@ -417,6 +436,7 @@ class MainActivity : ComponentActivity() {
 
     enum class DialogType { NONE, SHORTCUT }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun MainUI(viewModel: MyViewModel, activity: MainActivity) {
 
@@ -424,6 +444,7 @@ class MainActivity : ComponentActivity() {
         val isRunning by ServiceState.isRunning.observeAsState(false)
 
         val autoStart by viewModel.autoStart
+        val secured by viewModel.secured
         val minScore by viewModel.minScore
         val minGain by viewModel.minGain
         val maxGain by viewModel.maxGain
@@ -434,7 +455,83 @@ class MainActivity : ComponentActivity() {
 
         var activeDialog by remember { mutableStateOf(DialogType.NONE) }
 
-        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+        Scaffold(modifier = Modifier.fillMaxSize(),
+            topBar = {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                    ),
+                    title = {
+                        Text(stringResource(id = R.string.app_name))
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            val intent = Intent(activity, ThirdPartyNoticesActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            activity.startActivity(intent)
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Copyright,
+                                contentDescription = "Third Party Notices"
+                            )
+                        }
+                    }
+                )
+            },
+            bottomBar = {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    tonalElevation = 3.dp,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Row per i pulsanti
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = {
+                                    ContextCompat.startForegroundService(
+                                        activity,
+                                        Intent(activity, MainService::class.java)
+                                    )
+                                }, enabled = allMet &&
+                                        haHost?.isNotEmpty() == true &&
+                                        haPort?.isNotEmpty() == true &&
+                                        haToken?.isNotEmpty() == true &&
+                                        !isRunning
+                            ) {
+                                Text("Start")
+                            }
+
+                            Button(onClick = {
+                                activity.stopService(Intent(activity, MainService::class.java))
+                            }, enabled = isRunning) {
+                                Text("Stop")
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isRunning) "RUNNING" else "STOPPED",
+                                color = if (isRunning) Color.Green else Color.Red
+                            )
+                        }
+                    }
+                }
+            }
+            ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .padding(innerPadding)
@@ -510,54 +607,19 @@ class MainActivity : ComponentActivity() {
                     range = 0f..1f
                 )
 
-                // Row per i pulsanti
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = {
-                            ContextCompat.startForegroundService(
-                                activity,
-                                Intent(activity, MainService::class.java)
-                            )
-                        }, enabled = allMet &&
-                                haHost?.isNotEmpty() == true &&
-                                haPort?.isNotEmpty() == true &&
-                                haToken?.isNotEmpty() == true &&
-                                !isRunning
-                    ) {
-                        Text("Start")
-                    }
+                CheckboxParamEditor(
+                    enabled = !isRunning,
+                    value = secured,
+                    label = "Require authorization when device is locked",
+                    onValueChange = viewModel::setSecured
+                )
 
-                    Button(onClick = {
-                        activity.stopService(Intent(activity, MainService::class.java))
-                    }, enabled = isRunning) {
-                        Text("Stop")
-                    }
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isRunning) "RUNNING" else "STOPPED",
-                        color = if (isRunning) Color.Green else Color.Red
-                    )
-                }
-
-                // Checkbox sotto
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = autoStart,
-                        onCheckedChange = viewModel::setAutoStart,
-                        enabled = allMet
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Start on Boot")
-                }
+                CheckboxParamEditor(
+                    enabled = allMet,
+                    value = autoStart,
+                    label = "Start on Boot",
+                    onValueChange = viewModel::setAutoStart
+                )
 
                 Button(
                     onClick = { activeDialog = DialogType.SHORTCUT },
@@ -720,6 +782,40 @@ class MainActivity : ComponentActivity() {
                 keyboardOptions = keyboardOptions,
                 shape = RoundedCornerShape(12.dp),
             )
+        }
+    }
+
+    @Composable
+    fun CheckboxParamEditor(
+        enabled: Boolean = true,
+        value: Boolean,
+        label: String,
+        onValueChange: (Boolean) -> Unit,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) { onValueChange(!value) }
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Checkbox(
+                checked = value,
+                onCheckedChange = null,
+                enabled = enabled,
+                colors = CheckboxDefaults.colors(
+                    checkedColor = MaterialTheme.colorScheme.primary,
+                    uncheckedColor = MaterialTheme.colorScheme.outline
+                )
+            )
+
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f)
+            )
+
         }
     }
 

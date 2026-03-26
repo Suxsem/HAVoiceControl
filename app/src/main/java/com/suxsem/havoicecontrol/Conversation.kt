@@ -1,5 +1,6 @@
 package com.suxsem.havoicecontrol
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -7,6 +8,10 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,28 +21,61 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-object ConversationEvents {
+object ConversationManager {
+    var text by mutableStateOf("")
+        private set
+
+    var amplitude by mutableFloatStateOf(0f)
+        private set
+
+    var isTalking by mutableStateOf(false)
+        private set
+
+    fun updateText(newText: String) {
+        text = newText
+    }
+    fun updateAmplitude(newAmplitude: Float) {
+        amplitude = newAmplitude
+    }
+    fun setIsTalking(newIsTalking: Boolean) {
+        isTalking = newIsTalking
+    }
+
     private val _dismiss = MutableSharedFlow<Unit>()
     val dismiss = _dismiss.asSharedFlow()
 
     suspend fun notifyDismiss() {
         _dismiss.emit(Unit)
     }
+
+    private val _authRequests = MutableSharedFlow<CompletableDeferred<Boolean>>()
+    val authRequests = _authRequests.asSharedFlow()
+
+    suspend fun requestAuthentication(): Boolean {
+        val result = CompletableDeferred<Boolean>()
+        _authRequests.emit(result)
+        return result.await()
+    }
+
 }
 
 class Conversation (private val context: Context){
 
     private var speechRecognizer: SpeechRecognizer? = null
-    private var overlay: SpeechOverlay = SpeechOverlay(context)
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var resultDeferred: CompletableDeferred<Unit?>? = null
     private var client: HomeAssistantConversationClient? = null
     private var tts: AndroidTTSManager? = null
     private var conversationId: String? = null
+    private val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
+    private val secured = prefs.getBoolean("secured", true)
+    private val haHost = prefs.getString("ha_host", null)
+    private val haPort = prefs.getString("ha_port", null)
+    private val haToken = prefs.getString("ha_token", null)
 
     init {
         scope.launch {
-            ConversationEvents.dismiss.collect {
+            ConversationManager.dismiss.collect {
                 speechRecognizer?.cancel()
             }
         }
@@ -51,7 +89,7 @@ class Conversation (private val context: Context){
         val cleanupJob = scope.launch {
             resultDeferred!!.await()
 
-            overlay.hide()
+            ConversationManager.notifyDismiss()
             speechRecognizer?.destroy()
             client?.close()
             client = null
@@ -67,16 +105,11 @@ class Conversation (private val context: Context){
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
         speechRecognizer!!.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                overlay.show()
-                overlay.updateIsTalking(false)
+
                 if (tts == null) {
                     tts = AndroidTTSManager(context)
                 }
                 if (client == null) {
-                    val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
-                    val haHost = prefs.getString("ha_host", null)
-                    val haPort = prefs.getString("ha_port", null)
-                    val haToken = prefs.getString("ha_token", null)
                     if (haHost.isNullOrEmpty() || haPort.isNullOrEmpty() || haToken.isNullOrEmpty()) {
                         Toast.makeText(context, "Home Assistant not configured", Toast.LENGTH_LONG).show()
                         resultDeferred?.complete(Unit)
@@ -88,12 +121,12 @@ class Conversation (private val context: Context){
 
             override fun onRmsChanged(rmsdB: Float) {
                 // rmsdB è la potenza del suono, la usiamo per l'animazione
-                overlay.updateAmp(rmsdB)
+                ConversationManager.updateAmplitude(rmsdB)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
                 val data = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                overlay.updateText(data?.get(0) ?: "")
+                ConversationManager.updateText(data?.get(0) ?: "")
             }
 
             override fun onResults(results: Bundle?) {
@@ -103,40 +136,47 @@ class Conversation (private val context: Context){
                     resultDeferred?.complete(Unit)
                     return
                 }
-                overlay.updateText(text)
+                ConversationManager.updateText(text)
                 scope.launch {
-                    val result = client!!.process(text, conversationId)
+                    val authenticated = if (secured && isKeyguardLocked(context)) ConversationManager.requestAuthentication() else true
 
-                    result.onFailure { error ->
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                context,
-                                "Error: ${error.message}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                        resultDeferred?.complete(Unit)
-                        return@launch
-                    }
+                    if (authenticated) {
+                        val result = client!!.process(text, conversationId)
 
-                    result.onSuccess { intentRes ->
-                        overlay.updateIsTalking(true)
-
-                        conversationId = intentRes.conversation_id
-                        val speech = intentRes.response.speech
-                        val text = speech.text
-
-                        overlay.updateText(text ?: "")
-
-                        if (!text.isNullOrEmpty()) {
-                            tts?.speak(text, intentRes.response.language)
-                        }
-
-                        if (intentRes.continue_conversation) {
-                            startSTT();
-                        } else {
+                        result.onFailure { error ->
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "Error: ${error.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
                             resultDeferred?.complete(Unit)
+                            return@launch
                         }
+
+                        result.onSuccess { intentRes ->
+                            ConversationManager.setIsTalking(true)
+
+                            conversationId = intentRes.conversation_id
+                            val speech = intentRes.response.speech
+                            val text = speech.text
+
+                            ConversationManager.updateText(text ?: "")
+
+                            if (!text.isNullOrEmpty()) {
+                                tts?.speak(text, intentRes.response.language)
+                            }
+
+                            if (intentRes.continue_conversation) {
+                                startSTT();
+                            } else {
+                                resultDeferred?.complete(Unit)
+                            }
+                        }
+                    } else {
+                        Toast.makeText(context, "Authentication failed", Toast.LENGTH_LONG).show()
+                        resultDeferred?.complete(Unit)
                     }
                 }
             }
@@ -148,7 +188,7 @@ class Conversation (private val context: Context){
             }
 
             override fun onEndOfSpeech() {
-                overlay.updateAmp(0f)
+                ConversationManager.updateAmplitude(0f)
             }
 
             override fun onError(error: Int) {
@@ -162,6 +202,11 @@ class Conversation (private val context: Context){
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         speechRecognizer!!.startListening(intent)
+    }
+
+    fun isKeyguardLocked(context: Context): Boolean {
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        return keyguardManager.isKeyguardLocked
     }
 
 }

@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 
 class MainService : Service() {
 
+    private val self = this;
     private val wakeWordDetector by lazy { AudioWakeWordDetector(this) }
     private val conversation by lazy { Conversation(this) }
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -98,39 +99,21 @@ class MainService : Service() {
         mainLoopJob = serviceScope.launch {
             while (isActive) {
 
-                val score = wakeWordDetector.waitForWakeWord()
+                val detector = WakeWordDetector(applicationContext){ score ->
+                    Log.d("WakeWordService", "Wake word detected con score=$score")
 
-                conversation.chat()
+                    val intent = Intent(self, ConversationActivity::class.java).apply {
+                        putExtra("EXTRA_DO_NOT_START_CHAT", true)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                    serviceScope.launch {
+                        conversation.chat()
+                    }
 
-                Log.d("WakeWordService", "Wake word detected con score=$score")
-
-                /*
-                if (ActivityCompat.checkSelfPermission(
-                        this,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    val notification = NotificationCompat.Builder(this, NOTIF_CHANNEL_DETECTED)
-                        .setContentTitle("WAKEWORD RILEVATA")
-                        .setContentText("WAKEWORD RILEVATA")
-                        .setSmallIcon(android.R.drawable.ic_dialog_info)
-                        .setPriority(NotificationCompat.PRIORITY_LOW)
-                        .setAutoCancel(true)
-                        .build()
-
-                    val notificationManager = NotificationManagerCompat.from(this)
-                    val notificationId = (0..Int.MAX_VALUE).random() // id casuale per ogni notifica
-
-                    notificationManager.notify(notificationId, notification)
                 }
-                */
 
-                    /*
-                // esempio: invio broadcast locale all’activity
-                val broadcast = Intent("WAKEWORD_DETECTED")
-                broadcast.putExtra("score", score)
-                LocalBroadcastManager.getInstance(this).sendBroadcast(broadcast)
-                 */
+                detector.startDetection()
 
             }
         }

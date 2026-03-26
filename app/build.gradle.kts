@@ -67,6 +67,7 @@ dependencies {
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.org.jetbrains.kotlin.plugin.serialization.gradle.plugin)
+    implementation(libs.androidx.biometric)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -77,4 +78,5 @@ dependencies {
     implementation(libs.commons.math3)
     implementation (libs.onnxruntime.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.android.vad.silero)
 }
