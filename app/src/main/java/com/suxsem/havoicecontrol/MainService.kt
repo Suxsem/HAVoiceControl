@@ -64,6 +64,8 @@ class MainService : Service() {
             return
         }
 
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+
         val notificationIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -99,9 +101,11 @@ class MainService : Service() {
         mainLoopJob = serviceScope.launch {
             while (isActive) {
 
-                val detector = WakeWordDetector(applicationContext){ score ->
-                    Log.d("WakeWordService", "Wake word detected con score=$score")
+                val minScore = prefs.getFloat("min_score", 0f)
 
+                val detector = WakeWordDetector(applicationContext, "hey_veekee.onnx", minScore) { score ->
+                    Log.d("WakeWordService", "Wake word detected con score=$score")
+/*
                     val intent = Intent(self, ConversationActivity::class.java).apply {
                         putExtra("EXTRA_DO_NOT_START_CHAT", true)
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -110,6 +114,8 @@ class MainService : Service() {
                     serviceScope.launch {
                         conversation.chat()
                     }
+                    */
+
 
                 }
 
