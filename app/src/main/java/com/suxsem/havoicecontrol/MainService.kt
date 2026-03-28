@@ -28,10 +28,10 @@ import kotlinx.coroutines.launch
 class MainService : Service() {
 
     private val self = this;
-    private val wakeWordDetector by lazy { AudioWakeWordDetector(this) }
     private val conversation by lazy { Conversation(this) }
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var mainLoopJob: Job? = null
+
+    private var detector: WakeWordDetector? = null
 
     override fun onCreate() {
 
@@ -98,34 +98,29 @@ class MainService : Service() {
 
         ServiceState.setRunning(true)
 
-        mainLoopJob = serviceScope.launch {
-            while (isActive) {
+        serviceScope.launch {
 
-                val minScore = prefs.getFloat("min_score", 0f)
+            val minScore = prefs.getFloat("min_score", 0f)
 
-                val detector = WakeWordDetector(applicationContext, "hey_veekee.onnx", minScore) { score ->
-                    Log.d("WakeWordService", "Wake word detected con score=$score")
-/*
-                    val intent = Intent(self, ConversationActivity::class.java).apply {
-                        putExtra("EXTRA_DO_NOT_START_CHAT", true)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    startActivity(intent)
-                    serviceScope.launch {
-                        conversation.chat()
-                    }
-                    */
+            detector = WakeWordDetector(applicationContext, "hey_veekee.onnx", minScore) { score ->
+                Log.d("WakeWordService", "Wake word detected con score=$score")
 
+                detector!!.pauseDetection()
 
+                val intent = Intent(self, ConversationActivity::class.java).apply {
+                    putExtra("EXTRA_DO_NOT_START_CHAT", true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                serviceScope.launch {
+                    conversation.chat()
+                    detector!!.startDetection()
                 }
 
-                detector.startDetection()
-
             }
-        }
 
-        mainLoopJob!!.invokeOnCompletion {
-            wakeWordDetector.close()
+            detector!!.startDetection()
+
         }
 
     }
@@ -137,6 +132,9 @@ class MainService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+
+        detector?.pauseDetection()
+        detector?.releaseResources()
         serviceScope.cancel()
 
         ServiceState.setRunning(false)

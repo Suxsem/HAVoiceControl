@@ -91,6 +91,7 @@ class Conversation (private val context: Context){
 
             ConversationManager.notifyDismiss()
             speechRecognizer?.destroy()
+            speechRecognizer = null
             client?.close()
             client = null
             tts?.shutdown()

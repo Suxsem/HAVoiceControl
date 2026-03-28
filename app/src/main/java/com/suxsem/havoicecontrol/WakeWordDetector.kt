@@ -47,7 +47,7 @@ class WakeWordDetector(
     private var vadCycleCount = 0
     private var cooldownCycles = 0
     private val cooldownTotalCycles = 40 // = 1.28 secondi
-
+    private var isPaused = false
     private val env = OrtEnvironment.getEnvironment()
     private lateinit var melSession: OrtSession
     private lateinit var embSession: OrtSession
@@ -55,6 +55,9 @@ class WakeWordDetector(
 
     private val vad = VadSilero(context, SampleRate.SAMPLE_RATE_16K, FrameSize.FRAME_SIZE_512, Mode.NORMAL, 300, 150)
 
+    private val audioRecord : AudioRecord by lazy {
+        initAudioRecorder()
+    }
     private val minAudioBufSize = AudioRecord.getMinBufferSize(
         SampleRate.SAMPLE_RATE_16K.value,
         AudioFormat.CHANNEL_IN_MONO,
@@ -65,12 +68,6 @@ class WakeWordDetector(
 
     init {
         loadModels()
-        repeat(melWindowSize) {
-            melBuffer.add(FloatArray(melSize)) // Inizializza con frame "vuoti"
-        }
-        repeat(numEmbeddings) {
-            embeddingBuffer.add(FloatArray(embeddingSize)) // Inizializza con embedding "vuoti"
-        }
     }
 
     private fun loadModels() {
@@ -81,7 +78,7 @@ class WakeWordDetector(
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun startDetection() = withContext(Dispatchers.Default) {
+    private fun initAudioRecorder(): AudioRecord {
         val audioRecordBuilder = AudioRecord.Builder()
             .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
             .setAudioFormat(
@@ -98,49 +95,93 @@ class WakeWordDetector(
         val audioRecord = audioRecordBuilder.build()
         if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(audioRecord.audioSessionId).enabled = true
         if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(audioRecord.audioSessionId).enabled = true
+        return audioRecord
+    }
 
+    private fun reset() {
+        // 1. Reset del RingBuffer Audio
+        ringBuffer.clear()
+
+        // 2. Reset delle code Mel ed Embedding (ripristina lo stato iniziale "vuoto")
+        melBuffer.clear()
+        repeat(melWindowSize) {
+            melBuffer.add(FloatArray(melSize))
+        }
+        embeddingBuffer.clear()
+        repeat(numEmbeddings) {
+            embeddingBuffer.add(FloatArray(embeddingSize))
+        }
+
+        // 3. Reset variabili di stato
+        isVADActive = false
+        vadCycleCount = 0
+        cooldownCycles = 0
+
+        val silenceFrame = ShortArray(audioFrameSize)
+        repeat(10) { // 0.32s di silenzio
+            vad.isSpeech(silenceFrame)
+        }
+
+        Log.d("WakeWordDetector", "All buffers and states cleared")
+    }
+
+    fun releaseResources() {
+        isPaused = true
+        audioRecord.stop()
+        audioRecord.release()
+        vad.close()
+        env.close() // Chiude anche l'ambiente ONNX
+    }
+
+    fun pauseDetection() {
+        isPaused = true
+        audioRecord.stop()
+    }
+
+    suspend fun startDetection() = withContext(Dispatchers.Default) {
+
+        reset()
+        isPaused = false
         audioRecord.startRecording()
 
-        try {
-            while (isActive) {
-                val read =
-                    audioRecord.read(tempBuffer, 0, audioFrameSize, AudioRecord.READ_BLOCKING)
-                if (read == audioFrameSize) {
-                    ringBuffer.addBlock(tempBuffer, read)
 
-                    val speechDetected = vad.isSpeech(tempBuffer)
+        while (isActive && !isPaused) {
+            val read = audioRecord.read(tempBuffer, 0, audioFrameSize, AudioRecord.READ_BLOCKING)
 
-                    // Gestione Cooldown
-                    if (cooldownCycles > 0) {
-                        cooldownCycles--
-                        // Mentre siamo in cooldown, resettiamo gli stati del VAD
-                        isVADActive = false
-                        vadCycleCount = 0
-                        continue // Salta l'inferenza per questo frame
-                    }
+            if (isPaused) break
 
-                    if (speechDetected) {
-                        if (isVADActive) {
-                            vadCycleCount++
-                            if (vadCycleCount == 5) {
-                                // Abbiamo esattamente 2560 campioni nuovi (80ms * 2)
-                                runStep(numSteps = 2)
-                                vadCycleCount = 0
-                            }
-                        } else {
-                            Log.d("WakeWordDetector", "VAD attivato")
-                            runStep(numSteps = 16)
-                            isVADActive = true
+            if (read == audioFrameSize) {
+                ringBuffer.addBlock(tempBuffer, read)
+
+                val speechDetected = vad.isSpeech(tempBuffer)
+
+                // Gestione Cooldown
+                if (cooldownCycles > 0) {
+                    cooldownCycles--
+                    // Mentre siamo in cooldown, resettiamo gli stati del VAD
+                    isVADActive = false
+                    vadCycleCount = 0
+                    continue // Salta l'inferenza per questo frame
+                }
+
+                if (speechDetected) {
+                    if (isVADActive) {
+                        vadCycleCount++
+                        if (vadCycleCount == 5) {
+                            // Abbiamo esattamente 2560 campioni nuovi (80ms * 2)
+                            runStep(numSteps = 2)
                             vadCycleCount = 0
                         }
                     } else {
-                        isVADActive = false;
+                        Log.d("WakeWordDetector", "VAD attivato")
+                        runStep(numSteps = 16)
+                        isVADActive = true
+                        vadCycleCount = 0
                     }
+                } else {
+                    isVADActive = false;
                 }
             }
-        } finally {
-            audioRecord.stop()
-            audioRecord.release()
         }
     }
 
@@ -312,6 +353,11 @@ class WakeWordDetector(
                 System.arraycopy(buffer, 0, result, spaceToEnd, n - spaceToEnd)
             }
             return result
+        }
+
+        fun clear() {
+            writeIndex = 0
+            buffer.fill(0)
         }
     }
 
