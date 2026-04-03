@@ -102,7 +102,7 @@ class MainService : Service() {
 
             val minScore = prefs.getFloat("min_score", 0f)
 
-            detector = WakeWordDetector(applicationContext, "hey_veekee.onnx", minScore) { score ->
+            detector = WakeWordDetector(applicationContext, "hei_viki_03042026.onnx", minScore) { score ->
                 Log.d("WakeWordService", "Wake word detected con score=$score")
 
                 detector!!.pauseDetection()

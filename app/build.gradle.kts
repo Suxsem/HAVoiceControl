@@ -80,4 +80,5 @@ dependencies {
     implementation (libs.onnxruntime.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.android.vad.silero)
+    implementation(libs.android.vad.webrtc)
 }
