@@ -33,7 +33,9 @@ IMPROVEMENTS:
 class WakeWordDetector(
     private val context: Context,
     private val modelFile: String,
+    private val verifierFile: String,
     private val minScore: Float,
+    private val verifierScore: Float,
     private val onDetected: (prob: Float) -> Unit
 ) {
     private val audioFrameSize = 512
@@ -62,10 +64,11 @@ class WakeWordDetector(
     private lateinit var melSession: OrtSession
     private lateinit var embSession: OrtSession
     private lateinit var classifierSession: OrtSession
+    private lateinit var verifierSession: OrtSession
 
     private lateinit var webRtcAudioDeviceModule: JavaAudioDeviceModule
 
-    private val sileroVad = VadSilero(context, SampleRate.SAMPLE_RATE_16K, FrameSize.FRAME_SIZE_512, Mode.NORMAL, 300, 150)
+    private var sileroVad: VadSilero? = null
 
     private val tempBuffer = ShortArray(audioFrameSize)
 
@@ -79,6 +82,7 @@ class WakeWordDetector(
         melSession = env.createSession(context.assets.open("melspectrogram.onnx").readBytes(), opts)
         embSession = env.createSession(context.assets.open("embedding_model.onnx").readBytes(), opts)
         classifierSession = env.createSession(context.assets.open(modelFile).readBytes(), opts)
+        verifierSession = env.createSession(context.assets.open(verifierFile).readBytes(), opts)
     }
 
     private fun setupWebRtcAudio(context: Context) {
@@ -126,10 +130,8 @@ class WakeWordDetector(
         vadCycleCount = 0
         cooldownCycles = 0
 
-        val silenceFrame = ShortArray(audioFrameSize)
-        repeat(10) { // 0.32s di silenzio
-            sileroVad.isSpeech(silenceFrame)
-        }
+        sileroVad?.close()
+        sileroVad = VadSilero(context, SampleRate.SAMPLE_RATE_16K, FrameSize.FRAME_SIZE_512, Mode.NORMAL, 300, 150)
 
         Log.d("WakeWordDetector", "All buffers and states cleared")
     }
@@ -137,7 +139,7 @@ class WakeWordDetector(
     fun releaseResources() {
         isPaused = true
         webRtcAudioDeviceModule.release()
-        sileroVad.close()
+        sileroVad?.close()
         env.close() // Chiude anche l'ambiente ONNX
     }
 
@@ -164,7 +166,7 @@ class WakeWordDetector(
 
             ringBuffer.addBlock(tempBuffer, audioFrameSize)
 
-            val speechDetected = sileroVad.isSpeech(tempBuffer)
+            val speechDetected = sileroVad?.isSpeech(tempBuffer) ?: false
 
             // Gestione Cooldown
             if (cooldownCycles > 0) {
@@ -328,8 +330,33 @@ class WakeWordDetector(
 
                 // 4. Soglia di attivazione diretta
                 if (probability >= minScore) {
-                    cooldownCycles = cooldownTotalCycles
-                    onDetected(probability)
+
+                    if (verifierScore > 0) {
+
+                        // --- STEP 2: VERIFIER (Solo se il primo ha dato l'OK) ---
+                        val verifierInputName = verifierSession.inputNames.iterator().next()
+                        val verifierOutput =
+                            verifierSession.run(Collections.singletonMap(verifierInputName, it))
+
+                        verifierOutput.use { vRes ->
+                            @Suppress("UNCHECKED_CAST")
+                            val vValues = vRes[0].value as Array<FloatArray>
+
+                            // Nota: In Python fa [0][-1]. Se il tuo ONNX del verifier
+                            // ha output [1, 1], usa [0][0]. Se ha [1, 2], usa .last()
+                            val verifiedScore =
+                                vValues[0].last() //TODO verificare forma output modello
+
+                            if (verifiedScore >= verifierScore) {
+                                cooldownCycles = cooldownTotalCycles
+                                onDetected(verifiedScore)
+                            }
+                        }
+
+                    } else {
+                        cooldownCycles = cooldownTotalCycles
+                        onDetected(probability)
+                    }
                 }
             }
         }
