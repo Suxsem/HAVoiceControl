@@ -24,7 +24,6 @@ import kotlin.math.sqrt
 /*
 IMPROVEMENTS:
 - webrtc prima di silero. non semplice perché silero vuole audio costante
-- batch embeddings
 - https://mvnrepository.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn
 - silero senza liberia per avere controllo sul runtime
 */
@@ -41,18 +40,20 @@ class WakeWordDetector(
     private val audioFrameSize = 512
     private val sampleRate = 16000
     private val frameSamples = 1280 // 80ms a 16kHz
-    private val melSize = 32
     private val embeddingSize = 96
     private val numEmbeddings = 16
-    private val melWindowSize = 76
 
     private val webRtcAudioBridge = AudioBridge(3200)
     private val ringBuffer = AudioRingBuffer(sampleRate * 8) // 8 secondi
 
-    private val melBuffer = ArrayDeque<FloatArray>(melWindowSize)
+    private val melSize = 32          // Numero di coefficienti Mel per ogni frame
+    private val melWindowSize = 76    // Finestra temporale richiesta dal modello (76 frame)
+    private val melFrameStep = 8      // Avanzamento temporale per ogni step (8 frame)
+
+    private val melBuffer = ArrayDeque<FloatArray>(melWindowSize + (maxBatchSize * melFrameStep))
     private val embeddingBuffer = ArrayDeque<FloatArray>(numEmbeddings)
 
-    private val flatMelBuffer = FloatArray(melWindowSize * melSize)
+    private val flatMelBuffer = FloatArray(maxBatchSize * melWindowSize * melSize)
     private val flatMelFloatBuffer = FloatBuffer.wrap(flatMelBuffer)
     private val flatClassBuffer = FloatArray(numEmbeddings * embeddingSize)
     private val modelInputBuffer = FloatArray(numEmbeddings * 1760) // max 5 steps
@@ -73,6 +74,7 @@ class WakeWordDetector(
     private var sileroVad: VadSilero? = null
 
     private val tempBuffer = ShortArray(audioFrameSize)
+    private var vadActivationTime: Long = 0L
 
     init {
         loadModels()
@@ -126,7 +128,7 @@ class WakeWordDetector(
 
         // 2. Reset delle code Mel ed Embedding (ripristina lo stato iniziale "vuoto")
         melBuffer.clear()
-        repeat(melWindowSize) {
+        repeat(melWindowSize + (maxBatchSize * melFrameStep)) {
             melBuffer.add(FloatArray(melSize))
         }
         embeddingBuffer.clear()
@@ -195,6 +197,7 @@ class WakeWordDetector(
                         vadCycleCount = 0
                     }
                 } else {
+                    vadActivationTime = System.currentTimeMillis()
                     Log.d("WakeWordService", "VAD attivato")
                     runStep(numSteps = maxBatchSize)
                     isVADActive = true
@@ -233,6 +236,7 @@ class WakeWordDetector(
         }
 
         runMelInferenceBatch(numSteps)
+        runEmbeddingInferenceBatch(numSteps)
         checkWakeWord()
     }
 
@@ -262,21 +266,49 @@ class WakeWordDetector(
                 val flatBuffer = outTensor.floatBuffer
                 flatBuffer.rewind()
 
-                // Ciclo Batch: ONNX ha lavorato una volta, noi distribuiamo i risultati
-                repeat(batchSize) {
-                    // 1. Spostiamo la finestra Mel di 80ms (8 frame)
-                    repeat(8) {
-                        val reusableFrame = melBuffer.removeFirst()
-                        for (f in 0 until melSize) {
-                            reusableFrame[f] = (flatBuffer.get() / 10.0f) + 2.0f
-                        }
-                        melBuffer.addLast(reusableFrame)
+                // 1. Aggiorniamo la coda Mel (la nostra storia temporale)
+                repeat(batchSize * 8) {
+                    val reusableFrame = melBuffer.removeFirst()
+                    for (f in 0 until melSize) {
+                        reusableFrame[f] = (flatBuffer.get() / 10.0f) + 2.0f
                     }
+                    melBuffer.addLast(reusableFrame)
+                }
+            }
+        }
 
-                    // 2. Chiamata DIRETTA all'embedding per ogni step del batch
-                    // Ora la melBuffer è perfettamente allineata
-                    runEmbeddingInference()
+        val framesList = melBuffer.toList()
+        val totalAvailable = framesList.size
 
+        for (b in 0 until batchSize) {
+            val batchOffset = b * melWindowSize * melSize
+            val stepsBack = (batchSize - 1 - b) * melFrameStep
+            val startFrameIdx = (totalAvailable - melWindowSize) - stepsBack
+
+            for (f in 0 until melWindowSize) {
+                val frame = framesList[startFrameIdx + f]
+                System.arraycopy(frame, 0, flatMelBuffer, batchOffset + (f * melSize), melSize)
+            }
+        }
+    }
+
+    private fun runEmbeddingInferenceBatch(batchSize: Int) {
+        val totalElements = batchSize * melWindowSize * melSize
+        val bufferForOnnx = FloatBuffer.wrap(flatMelBuffer, 0, totalElements)
+
+        val tensor = OnnxTensor.createTensor(env, bufferForOnnx,
+            longArrayOf(batchSize.toLong(), melWindowSize.toLong(), melSize.toLong(), 1L))
+
+        tensor.use {
+            val output = embSession.run(Collections.singletonMap(embSession.inputNames.iterator().next(), it))
+            output.use { embOut ->
+                val outTensor = embOut[0] as OnnxTensor
+                val outBuffer = outTensor.floatBuffer
+
+                repeat(batchSize) {
+                    val reusableEmbedding = embeddingBuffer.removeFirst()
+                    outBuffer.get(reusableEmbedding)
+                    embeddingBuffer.addLast(reusableEmbedding)
                 }
             }
         }
@@ -317,7 +349,7 @@ class WakeWordDetector(
         }
     }
 
-    private fun checkWakeWord() : Boolean {
+    private fun checkWakeWord() {
 
         // 2. Compattazione degli embedding nel buffer piatto (Zero-copy)
         var offset = 0
@@ -363,20 +395,26 @@ class WakeWordDetector(
                                 vValues[0].last() //TODO verificare forma output modello
 
                             if (verifiedScore >= verifierScore) {
-                                cooldownCycles = cooldownTotalCycles
-                                onDetected(verifiedScore)
+                                wakeWordDetected(verifierScore)
                             }
                         }
 
                     } else {
-                        cooldownCycles = cooldownTotalCycles
-                        onDetected(probability)
-                        return true
+                        wakeWordDetected(probability)
                     }
                 }
             }
         }
-        return false
+    }
+
+    private fun wakeWordDetected(score: Float) {
+        val detectionTime = System.currentTimeMillis()
+        val delta = detectionTime - vadActivationTime
+
+        Log.d("WakeWordDetector", "Rilevamento avvenuto in: ${delta}ms con score: $score")
+
+        cooldownCycles = cooldownTotalCycles
+        onDetected(score)
     }
 
     private fun applyAGC(samples: ShortArray): ShortArray {
