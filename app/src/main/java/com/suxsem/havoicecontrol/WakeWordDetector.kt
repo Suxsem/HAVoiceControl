@@ -27,7 +27,6 @@ IMPROVEMENTS:
 - batch embeddings
 - https://mvnrepository.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn
 - silero senza liberia per avere controllo sul runtime
-- modello italiano
 */
 
 class WakeWordDetector(
@@ -38,6 +37,7 @@ class WakeWordDetector(
     private val verifierScore: Float,
     private val onDetected: (prob: Float) -> Unit
 ) {
+    private val maxBatchSize = 16 // per riempire esattamente la finestra di osservazione del modello
     private val audioFrameSize = 512
     private val sampleRate = 16000
     private val frameSamples = 1280 // 80ms a 16kHz
@@ -55,6 +55,8 @@ class WakeWordDetector(
     private val flatMelBuffer = FloatArray(melWindowSize * melSize)
     private val flatMelFloatBuffer = FloatBuffer.wrap(flatMelBuffer)
     private val flatClassBuffer = FloatArray(numEmbeddings * embeddingSize)
+    private val modelInputBuffer = FloatArray(numEmbeddings * 1760) // max 5 steps
+
     private var isVADActive = false
     private var vadCycleCount = 0
     private var cooldownCycles = 0
@@ -79,6 +81,13 @@ class WakeWordDetector(
 
     private fun loadModels() {
         val opts = OrtSession.SessionOptions()
+        // Attiva il massimo livello di ottimizzazione
+        opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+
+        val numCores = Runtime.getRuntime().availableProcessors()
+        val optimalThreads = numCores.coerceAtLeast(1).coerceAtMost(2)
+        opts.setIntraOpNumThreads(optimalThreads)
+
         melSession = env.createSession(context.assets.open("melspectrogram.onnx").readBytes(), opts)
         embSession = env.createSession(context.assets.open("embedding_model.onnx").readBytes(), opts)
         classifierSession = env.createSession(context.assets.open(modelFile).readBytes(), opts)
@@ -186,13 +195,13 @@ class WakeWordDetector(
                         vadCycleCount = 0
                     }
                 } else {
-                    Log.d("WakeWordDetector", "VAD attivato")
-                    runStep(numSteps = 16)
+                    Log.d("WakeWordService", "VAD attivato")
+                    runStep(numSteps = maxBatchSize)
                     isVADActive = true
                     vadCycleCount = 0
                 }
             } else {
-                isVADActive = false;
+                isVADActive = false
             }
 
         }
@@ -202,33 +211,31 @@ class WakeWordDetector(
      * Esegue il mantenimento della pipeline per N step da 80ms
      */
     private fun runStep(numSteps: Int) {
+
         // Per N step, abbiamo bisogno di (N * 1280) nuovi + 480 iniziali di contesto
         val contextSize = 480
         val totalAudioToFetch = (numSteps * frameSamples) + contextSize
 
         val audioData = ringBuffer.getLastSamples(totalAudioToFetch)
-        val floatAudio = FloatArray(audioData.size) { audioData[it] / 32768.0f }
-
-        // Prepariamo il batch per ONNX: [numSteps, 1760]
-        val batchInput = FloatArray(numSteps * 1760)
 
         for (i in 0 until numSteps) {
             // Ogni riga i inizia con 480 campioni di contesto e prosegue con 1280 nuovi
             // Riga 0: offset 0 in floatAudio
             // Riga 1: offset 1280 in floatAudio...
             val sourceOffset = i * frameSamples
-            System.arraycopy(floatAudio, sourceOffset, batchInput, i * 1760, 1760)
+            val destinationOffset = i * 1760
+
+            for (j in 0 until 1760) {
+                // Conversione diretta Short -> Float senza array intermedi
+                // Non dividiamo per 32768 come confermato da utils.py
+                modelInputBuffer[destinationOffset + j] = audioData[sourceOffset + j].toFloat()
+            }
         }
 
-        runMelInferenceBatch(batchInput, numSteps)
+        runMelInferenceBatch(numSteps)
         checkWakeWord()
     }
 
-    /**
-     * Esegue l'inferenza Mel su un batch di audio.
-     * @param audio L'array di campioni (es. 1280 per batch 1, 2560 per batch 2)
-     * @param batchSize Il numero di blocchi da 80ms contenuti nell'audio
-     */
     /**
      * Esegue l'inferenza Mel e restituisce una lista piatta di frame (8 frame per ogni 80ms).
      */
@@ -236,14 +243,22 @@ class WakeWordDetector(
      * Legge direttamente dal buffer nativo di ONNX e aggiorna la coda Mel.
      * Zero allocazioni di liste intermedie.
      */
-    private fun runMelInferenceBatch(audio: FloatArray, batchSize: Int) {
+    /**
+     * Esegue l'inferenza Mel su un batch di audio.
+     * @param batchSize Il numero di blocchi da 80ms contenuti nell'audio
+     */
+    private fun runMelInferenceBatch(batchSize: Int) {
 
-        val tensorInput = OnnxTensor.createTensor(env, FloatBuffer.wrap(audio), longArrayOf(batchSize.toLong(), 1760L))
+        val inputBuffer = FloatBuffer.wrap(modelInputBuffer)
+        inputBuffer.limit(batchSize * 1760)
+
+        val tensorInput = OnnxTensor.createTensor(env, inputBuffer, longArrayOf(batchSize.toLong(), 1760L))
 
         tensorInput.use {
             val output = melSession.run(Collections.singletonMap(melSession.inputNames.iterator().next(), it))
             output.use { melOut ->
                 val outTensor = melOut[0] as OnnxTensor
+
                 val flatBuffer = outTensor.floatBuffer
                 flatBuffer.rewind()
 
@@ -302,7 +317,7 @@ class WakeWordDetector(
         }
     }
 
-    private fun checkWakeWord() {
+    private fun checkWakeWord() : Boolean {
 
         // 2. Compattazione degli embedding nel buffer piatto (Zero-copy)
         var offset = 0
@@ -356,10 +371,12 @@ class WakeWordDetector(
                     } else {
                         cooldownCycles = cooldownTotalCycles
                         onDetected(probability)
+                        return true
                     }
                 }
             }
         }
+        return false
     }
 
     private fun applyAGC(samples: ShortArray): ShortArray {
