@@ -37,6 +37,11 @@ android {
     buildFeatures {
         compose = true
     }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
 }
 
 kotlin {
@@ -68,7 +73,6 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.org.jetbrains.kotlin.plugin.serialization.gradle.plugin)
     implementation(libs.androidx.biometric)
-    implementation(libs.android)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -80,5 +84,4 @@ dependencies {
     implementation (libs.onnxruntime.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.android.vad.silero)
-    implementation(libs.android.vad.webrtc)
 }

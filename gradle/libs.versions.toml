@@ -25,8 +25,6 @@ ktorSerializationKotlinxJson = "3.3.3"
 orgJetbrainsKotlinPluginSerializationGradlePlugin = "2.3.0"
 biometric = "1.4.0-alpha05"
 silero-vad = "2.0.10"
-webrtc-vad = "2.0.10"
-android = "144.7559.01"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -60,8 +58,6 @@ ktor-serialization-kotlinx-json = { group = "io.ktor", name = "ktor-serializatio
 org-jetbrains-kotlin-plugin-serialization-gradle-plugin = { group = "org.jetbrains.kotlin.plugin.serialization", name = "org.jetbrains.kotlin.plugin.serialization.gradle.plugin", version.ref = "orgJetbrainsKotlinPluginSerializationGradlePlugin" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 android-vad-silero = { group = "com.github.gkonovalov.android-vad", name = "silero", version.ref = "silero-vad" }
-android-vad-webrtc = { group = "com.github.gkonovalov.android-vad", name = "webrtc", version.ref = "webrtc-vad" }
-android = { group = "io.github.webrtc-sdk", name = "android", version.ref = "android" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

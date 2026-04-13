@@ -6,16 +6,16 @@ import android.media.MediaRecorder
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import android.annotation.SuppressLint
+import android.media.AudioRecord
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import com.konovalov.vad.silero.VadSilero
 import com.konovalov.vad.silero.config.FrameSize
 import com.konovalov.vad.silero.config.Mode
 import com.konovalov.vad.silero.config.SampleRate
 import kotlinx.coroutines.*
-import org.webrtc.PeerConnectionFactory
-import org.webrtc.audio.JavaAudioDeviceModule
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.ArrayDeque
 import java.util.Collections
@@ -37,13 +37,23 @@ class WakeWordDetector(
     private val onDetected: (prob: Float) -> Unit
 ) {
     private val maxBatchSize = 16 // per riempire esattamente la finestra di osservazione del modello
-    private val audioFrameSize = 512
+    private val audioFrameSize = 256
     private val sampleRate = 16000
     private val frameSamples = 1280 // 80ms a 16kHz
     private val embeddingSize = 96
     private val numEmbeddings = 16
 
-    private val webRtcAudioBridge = AudioBridge(3200)
+    @SuppressLint("MissingPermission")
+    private val audioRecord = AudioRecord(
+        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+        sampleRate,
+        AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT,
+        sampleRate * 5 // 5 seconds
+    )
+    private var hwAgc: AutomaticGainControl? = null
+    private var hwNs: NoiseSuppressor? = null
+
     private val ringBuffer = AudioRingBuffer(sampleRate * 8) // 8 secondi
 
     private val melSize = 32          // Numero di coefficienti Mel per ogni frame
@@ -54,7 +64,6 @@ class WakeWordDetector(
     private val embeddingBuffer = ArrayDeque<FloatArray>(numEmbeddings)
 
     private val flatMelBuffer = FloatArray(maxBatchSize * melWindowSize * melSize)
-    private val flatMelFloatBuffer = FloatBuffer.wrap(flatMelBuffer)
     private val flatClassBuffer = FloatArray(numEmbeddings * embeddingSize)
     private val modelInputBuffer = FloatArray(numEmbeddings * 1760) // max 5 steps
 
@@ -69,16 +78,26 @@ class WakeWordDetector(
     private lateinit var classifierSession: OrtSession
     private lateinit var verifierSession: OrtSession
 
-    private lateinit var webRtcAudioDeviceModule: JavaAudioDeviceModule
 
     private var sileroVad: VadSilero? = null
+    private var speexWrapper = SpeexWrapper()
 
     private val tempBuffer = ShortArray(audioFrameSize)
     private var vadActivationTime: Long = 0L
 
     init {
         loadModels()
-        setupWebRtcAudio(context)
+        speexWrapper.initSpeex()
+
+        if (AutomaticGainControl.isAvailable()) {
+            hwAgc = AutomaticGainControl.create(audioRecord.audioSessionId)
+            hwAgc!!.enabled = true
+        }
+
+        if (NoiseSuppressor.isAvailable()) {
+            hwNs = NoiseSuppressor.create(audioRecord.audioSessionId)
+            hwNs!!.enabled = true
+        }
     }
 
     private fun loadModels() {
@@ -96,35 +115,9 @@ class WakeWordDetector(
         verifierSession = env.createSession(context.assets.open(verifierFile).readBytes(), opts)
     }
 
-    private fun setupWebRtcAudio(context: Context) {
-        // 1. Inizializza l'ambiente nativo WebRTC
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions()
-        )
-
-        // 3. Configura il modulo con NS e AGC software attivi
-        webRtcAudioDeviceModule = JavaAudioDeviceModule.builder(context)
-            .setInputSampleRate(16000)
-            .setUseHardwareNoiseSuppressor(true) //fallback software
-            .setUseHardwareAcousticEchoCanceler(true) //fallback software
-            .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-            .setAudioFormat(AudioFormat.ENCODING_PCM_16BIT)
-            .setUseStereoInput(false)
-            .setSamplesReadyCallback { audioFrame ->
-                val pcmData = audioFrame.data
-                val shorts = ShortArray(pcmData.size / 2)
-                ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-                //val amplified = applyAGC(shorts)
-                webRtcAudioBridge.push(shorts) // Veloce, no boxing, no allocazioni extra
-            }
-            .createAudioDeviceModule()
-
-    }
-
     private fun reset() {
         // 1. Reset del RingBuffer Audio
         ringBuffer.clear()
-        webRtcAudioBridge.clear()
 
         // 2. Reset delle code Mel ed Embedding (ripristina lo stato iniziale "vuoto")
         melBuffer.clear()
@@ -149,35 +142,59 @@ class WakeWordDetector(
 
     fun releaseResources() {
         isPaused = true
-        webRtcAudioDeviceModule.release()
+
+        hwAgc?.enabled = false
+        hwAgc?.release()
+        hwAgc = null
+
+        hwNs?.enabled = false
+        hwNs?.release()
+        hwNs = null
+
+        audioRecord.stop()
+        audioRecord.release()
+
         sileroVad?.close()
+        sileroVad = null
+
         env.close() // Chiude anche l'ambiente ONNX
+        speexWrapper.destroySpeex()
     }
 
     fun pauseDetection() {
         isPaused = true
-        webRtcAudioDeviceModule.requestStopRecording()
+        audioRecord.stop()
     }
 
     suspend fun startDetection() = withContext(Dispatchers.Default) {
 
         reset()
         isPaused = false
-        webRtcAudioDeviceModule.requestStartRecording()
-
+        audioRecord.startRecording()
 
         while (isActive && !isPaused) {
 
-            if (!webRtcAudioBridge.pull(tempBuffer)) {
+            repeat (2) { // silero vuole 512 campioni
+                if (audioRecord.read(
+                        tempBuffer,
+                        0,
+                        audioFrameSize,
+                        AudioRecord.READ_BLOCKING
+                    ) != audioFrameSize
+                ) {
+                    if (isPaused) break
+                    continue // WebRTC non ha ancora prodotto abbastanza dati
+                }
+
+                speexWrapper.processAudio(tempBuffer)
+
                 if (isPaused) break
-                continue // WebRTC non ha ancora prodotto abbastanza dati
+
+                ringBuffer.addBlock(tempBuffer, audioFrameSize)
+
             }
 
-            if (isPaused) break
-
-            ringBuffer.addBlock(tempBuffer, audioFrameSize)
-
-            val speechDetected = sileroVad?.isSpeech(tempBuffer) ?: false
+            val speechDetected = sileroVad?.isSpeech(ringBuffer.getLastSamples(512)) ?: false
 
             // Gestione Cooldown
             if (cooldownCycles > 0) {
@@ -314,41 +331,6 @@ class WakeWordDetector(
         }
     }
 
-    /**
-     * Genera un embedding partendo dai 76 frame contenuti nella melBuffer.
-     * Utilizza buffer pre-allocati per massimizzare le performance.
-     */
-    private fun runEmbeddingInference() {
-        // 1. Copiamo i dati dalla Deque (76 frame) al buffer piatto
-        // Ogni frame è un FloatArray da 32
-        var offset = 0
-        for (frame in melBuffer) {
-            System.arraycopy(frame, 0, flatMelBuffer, offset, melSize)
-            offset += melSize
-        }
-
-        // Reset della posizione per l'SDK ONNX
-        flatMelFloatBuffer.rewind()
-
-        // 2. Creazione del Tensor [1, 76, 32, 1]
-        // Usiamo il wrap del buffer pre-allocato
-        val tensor = OnnxTensor.createTensor(env, flatMelFloatBuffer, longArrayOf(1, 76, 32, 1))
-
-        tensor.use {
-            // Esecuzione sulla sessione dell'Embedding Model (es. Google AudioSet)
-            val output = embSession.run(Collections.singletonMap(embSession.inputNames.iterator().next(), tensor))
-
-            output.use {
-                val outTensor = it[0] as OnnxTensor
-                val outBuffer = outTensor.floatBuffer
-
-                val reusableEmbedding = embeddingBuffer.removeFirst()
-                outBuffer.get(reusableEmbedding)
-                embeddingBuffer.addLast(reusableEmbedding)
-            }
-        }
-    }
-
     private fun checkWakeWord() {
 
         // 2. Compattazione degli embedding nel buffer piatto (Zero-copy)
@@ -461,58 +443,6 @@ class WakeWordDetector(
         fun clear() {
             writeIndex = 0
             buffer.fill(0)
-        }
-    }
-
-    class AudioBridge(capacity: Int) {
-        private val buffer = ShortArray(capacity)
-        private var writeIdx = 0
-        private var readIdx = 0
-        private var count = 0
-        private val lock = Object()
-
-        fun push(samples: ShortArray) {
-            synchronized(lock) {
-                for (s in samples) {
-                    buffer[writeIdx] = s
-                    writeIdx = (writeIdx + 1) % buffer.size
-                }
-                count = buffer.size.coerceAtMost(count + samples.size)
-                lock.notifyAll()
-            }
-        }
-
-        fun pull(target: ShortArray): Boolean {
-            synchronized(lock) {
-                val timeout = 100L
-                val start = System.currentTimeMillis()
-                while (count < target.size) {
-                    val remaining = timeout - (System.currentTimeMillis() - start)
-                    if (remaining <= 0) return false
-                    lock.wait(remaining)
-                }
-                for (i in target.indices) {
-                    target[i] = buffer[readIdx]
-                    readIdx = (readIdx + 1) % buffer.size
-                }
-                count -= target.size
-                return true
-            }
-        }
-
-        /**
-         * Svuota completamente il bridge, resettando i puntatori e il conteggio.
-         * Da chiamare nel metodo reset() del WakeWordDetector.
-         */
-        fun clear() {
-            synchronized(lock) {
-                writeIdx = 0
-                readIdx = 0
-                count = 0
-                // Opzionale: pulizia fisica dell'array per sicurezza (ma non strettamente necessaria)
-                buffer.fill(0)
-                Log.d("AudioBridge", "Bridge cleared and pointers reset")
-            }
         }
     }
 
