@@ -81,7 +81,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.commons.math3)
-    implementation (libs.onnxruntime.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.android.vad.silero)
+    implementation (libs.onnxruntime.android)
 }

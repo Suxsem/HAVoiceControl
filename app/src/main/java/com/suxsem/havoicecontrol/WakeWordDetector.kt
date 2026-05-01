@@ -5,18 +5,17 @@ import android.media.AudioFormat
 import android.media.MediaRecorder
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtLoggingLevel
+import ai.onnxruntime.OrtProvider
 import ai.onnxruntime.OrtSession
 import android.annotation.SuppressLint
 import android.media.AudioRecord
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
-import com.konovalov.vad.silero.VadSilero
-import com.konovalov.vad.silero.config.FrameSize
-import com.konovalov.vad.silero.config.Mode
-import com.konovalov.vad.silero.config.SampleRate
 import kotlinx.coroutines.*
 import java.nio.FloatBuffer
+import java.nio.LongBuffer
 import java.util.ArrayDeque
 import java.util.Collections
 import kotlin.math.sqrt
@@ -24,9 +23,9 @@ import kotlin.math.sqrt
 /*
 IMPROVEMENTS:
 - webrtc prima di silero. non semplice perché silero vuole audio costante
-- https://mvnrepository.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn
-- silero senza liberia per avere controllo sul runtime
 */
+
+private const val NORM_FACTOR = 1.0f / 32768.0f
 
 class WakeWordDetector(
     private val context: Context,
@@ -73,17 +72,35 @@ class WakeWordDetector(
     private val cooldownTotalCycles = 40 // = 1.28 secondi
     private var isPaused = false
     private val env = OrtEnvironment.getEnvironment()
+    private lateinit var sileroSession: OrtSession
     private lateinit var melSession: OrtSession
     private lateinit var embSession: OrtSession
     private lateinit var classifierSession: OrtSession
     private lateinit var verifierSession: OrtSession
 
+    // Stati ricorrenti per Silero VAD (LSTM/GRU)
+    private val vadState = FloatArray(256)
 
-    private var sileroVad: VadSilero? = null
+    // Buffer per l'input SR (Sample Rate) richiesto dal modello op15
+    private val srTensorValue = longArrayOf(16000)
+    private val vadAudioBuffer = FloatArray(576) // Buffer pre-allocato per 512 campioni
+
+    private val srBuffer = LongBuffer.wrap(srTensorValue)
+
     private var speexWrapper = SpeexWrapper()
 
     private val tempBuffer = ShortArray(audioFrameSize)
     private var vadActivationTime: Long = 0L
+
+
+    private var isSpeechTriggered = false
+    private var speechCounter = 0
+    private var silenceCounter = 0
+
+    // Soglie calcolate (300ms / 32ms ≈ 10 | 150ms / 32ms ≈ 5)
+    private val minSpeechFrames = 10
+    private val minSilenceFrames = 5
+
 
     init {
         loadModels()
@@ -98,17 +115,32 @@ class WakeWordDetector(
             hwNs = NoiseSuppressor.create(audioRecord.audioSessionId)
             hwNs!!.enabled = true
         }
+
     }
 
     private fun loadModels() {
         val opts = OrtSession.SessionOptions()
         // Attiva il massimo livello di ottimizzazione
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+        opts.setSessionLogLevel(OrtLoggingLevel.ORT_LOGGING_LEVEL_VERBOSE)
 
         val numCores = Runtime.getRuntime().availableProcessors()
         val optimalThreads = numCores.coerceAtLeast(1).coerceAtMost(2)
         opts.setIntraOpNumThreads(optimalThreads)
 
+        val available = OrtEnvironment.getAvailableProviders()
+
+        if (available.contains(OrtProvider.NNAPI)) {
+            opts.addNnapi()
+        }
+        if (available.contains(OrtProvider.XNNPACK)) {
+            opts.addXnnpack(Collections.emptyMap())
+        }
+        if (available.contains(OrtProvider.QNN)) {
+            opts.addQnn(mapOf("backend_path" to "libQnnHtp.so"))
+        }
+
+        sileroSession = env.createSession(context.assets.open("silero_vad_16k_op15.onnx").readBytes(), opts)
         melSession = env.createSession(context.assets.open("melspectrogram.onnx").readBytes(), opts)
         embSession = env.createSession(context.assets.open("embedding_model.onnx").readBytes(), opts)
         classifierSession = env.createSession(context.assets.open(modelFile).readBytes(), opts)
@@ -129,20 +161,23 @@ class WakeWordDetector(
             embeddingBuffer.add(FloatArray(embeddingSize))
         }
 
-        // 3. Reset variabili di stato
+        // 3. Reset variabili di stato e logica VAD
         isVADActive = false
         vadCycleCount = 0
         cooldownCycles = 0
 
-        sileroVad?.close()
-        sileroVad = VadSilero(context, SampleRate.SAMPLE_RATE_16K, FrameSize.FRAME_SIZE_512, Mode.NORMAL, 300, 150)
+        // 4. Reset degli stati ricorrenti di Silero VAD
+        // Questo è CRITICO: senza questo, il VAD potrebbe mantenere
+        // uno stato di "attivazione" basato sull'audio registrato prima del reset.
+        vadState.fill(0f)
 
-        Log.d("WakeWordDetector", "All buffers and states cleared")
+        Log.d("WakeWordDetector", "All buffers and states cleared (Integrated Silero VAD)")
     }
 
     fun releaseResources() {
         isPaused = true
 
+        // 1. Ferma e rilascia l'hardware audio
         hwAgc?.enabled = false
         hwAgc?.release()
         hwAgc = null
@@ -154,11 +189,25 @@ class WakeWordDetector(
         audioRecord.stop()
         audioRecord.release()
 
-        sileroVad?.close()
-        sileroVad = null
+        // 2. Chiudi tutte le sessioni ONNX individualmente
+        // È importante farlo prima di chiudere l'ambiente (env)
+        try {
+            if (::sileroSession.isInitialized) sileroSession.close()
+            if (::melSession.isInitialized) melSession.close()
+            if (::embSession.isInitialized) embSession.close()
+            if (::classifierSession.isInitialized) classifierSession.close()
+            if (::verifierSession.isInitialized) verifierSession.close()
+        } catch (e: Exception) {
+            Log.e("WakeWordDetector", "Errore durante la chiusura delle sessioni ONNX", e)
+        }
 
-        env.close() // Chiude anche l'ambiente ONNX
+        // 3. Chiudi l'ambiente ONNX
+        env.close()
+
+        // 4. Pulisci le risorse esterne
         speexWrapper.destroySpeex()
+
+        Log.d("WakeWordDetector", "Risorse rilasciate correttamente")
     }
 
     fun pauseDetection() {
@@ -194,7 +243,9 @@ class WakeWordDetector(
 
             }
 
-            val speechDetected = sileroVad?.isSpeech(ringBuffer.getLastSamples(512)) ?: false
+            val activityDetected = runSpeexVad();
+
+            val speechDetected = runSileroVAD()
 
             // Gestione Cooldown
             if (cooldownCycles > 0) {
@@ -224,6 +275,87 @@ class WakeWordDetector(
                 isVADActive = false
             }
 
+        }
+
+    }
+
+    private fun runSpeexVad(): Boolean {
+        return true;
+    }
+
+    private fun runSileroVAD(): Boolean {
+        // 1. Normalizzazione in-place nel buffer pre-allocato
+        val samples = ringBuffer.getLastSamples(576)
+        var i = 0
+        while (i < 512) {
+            vadAudioBuffer[i] = samples[i] * NORM_FACTOR
+            i++
+        }
+
+        // 2. Creazione Tensori (Shape basate su Netron)
+        // input: [batch=1, sequence=512]
+        val inputTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(vadAudioBuffer), longArrayOf(1, 576))
+        // sr: scalare o [1]
+        val srTensor = OnnxTensor.createTensor(env, srBuffer, longArrayOf(1))
+        // state: [2, 1, 128]
+        val stateTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(vadState), longArrayOf(2, 1, 128))
+
+        val inputs = mapOf(
+            "input" to inputTensor,
+            "sr" to srTensor,
+            "state" to stateTensor
+        )
+
+        return try {
+            @Suppress("UNCHECKED_CAST")
+            sileroSession.run(inputs).use { results ->
+
+                // Output 0: Probabilità [1, 1]
+                val output = results[0].value as Array<FloatArray>
+                val probability = output[0][0]
+
+                // Output 1: Nuovo stato (stateN)
+                // La forma potrebbe essere [2, 1, 128]
+                val newState = results[1].value as Array<Array<FloatArray>>
+
+                // Aggiornamento dello stato per il prossimo frame (appiattimento veloce)
+                var index = 0
+                for (i in 0 until 2) {
+                    for (j in 0 until 1) { // batch è 1
+                        System.arraycopy(newState[i][j], 0, vadState, index, 128)
+                        index += 128
+                    }
+                }
+
+                // LOGICA DI TRIGGERING (Stile VADIterator)
+                val threshold = 0.6f //NORMAL  //NORMAL=0.5 AGGRESSIVE=0.8 //VERY_AGGRESSIVE=0.95
+                val negThreshold = threshold - 0.15f // 0.45f per confermare il silenzio [cite: 33]
+
+                if (probability >= threshold) {
+                    silenceCounter = 0 // Reset del conteggio silenzio [cite: 69]
+                    speechCounter++
+
+                    if (speechCounter >= minSpeechFrames && !isSpeechTriggered) {
+                        isSpeechTriggered = true
+                    }
+                } else if (probability < negThreshold) {
+                    speechCounter = 0 // Reset del conteggio voce
+
+                    if (isSpeechTriggered) {
+                        silenceCounter++
+                        if (silenceCounter >= minSilenceFrames) {
+                            isSpeechTriggered = false
+                        }
+                    }
+                }
+
+                // Restituisce lo stato attuale dell'automa
+                isSpeechTriggered
+            }
+        } finally {
+            inputTensor.close()
+            srTensor.close()
+            stateTensor.close()
         }
     }
 
