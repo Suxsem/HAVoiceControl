@@ -39,25 +39,38 @@ Java_com_suxsem_havoicecontrol_SpeexWrapper_initSpeex(JNIEnv *env, jobject insta
 		speex_preprocess_ctl(st, SPEEX_PREPROCESS_SET_DEREVERB_DECAY, &dereverb_decay);
 		speex_preprocess_ctl(st, SPEEX_PREPROCESS_SET_DEREVERB_LEVEL, &dereverb_level);
 
+        // 4. VAD
+        int vad = 1;
+        int prob_start = 95; // Percentuale di probabilità per far scattare il VAD (es. 80%)
+
+        speex_preprocess_ctl(st, SPEEX_PREPROCESS_SET_VAD, &vad);
+        speex_preprocess_ctl(st, SPEEX_PREPROCESS_SET_PROB_START, &prob_start);
+
     }
 }
 
-// Elaborazione del buffer audio
-JNIEXPORT void JNICALL
+// Elaborazione del buffer audio con ritorno Booleano (VAD)
+JNIEXPORT jboolean JNICALL
 Java_com_suxsem_havoicecontrol_SpeexWrapper_processAudio(JNIEnv *env, jobject instance, jshortArray audioData) {
-    if (st == nullptr) return;
+    if (st == nullptr) return JNI_FALSE;
 
     // Otteniamo il puntatore ai dati grezzi dell'array JNI
     jshort *buffer = env->GetShortArrayElements(audioData, nullptr);
     jsize len = env->GetArrayLength(audioData);
-		
-    // Elaborazione (speex_preprocess_run lavora in-place sull'array)
+
+    int is_speech = 0;
+
+    // Elaborazione (speex_preprocess_run lavora in-place e restituisce lo stato VAD)
     if (len >= frame_size) {
-        speex_preprocess_run(st, buffer);
+        // La firma restituisce 1 se c'è parlato, 0 se è silenzio/rumore
+        is_speech = speex_preprocess_run(st, buffer);
     }
 
     // Rilasciamo l'array comunicando al sistema che abbiamo finito
     env->ReleaseShortArrayElements(audioData, buffer, 0);
+
+    // Convertiamo l'int di Speex nel jboolean di JNI
+    return (is_speech == 1) ? JNI_TRUE : JNI_FALSE;
 }
 
 // Distruzione dello stato (Chiamalo quando chiudi l'app)

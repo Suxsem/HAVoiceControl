@@ -9,7 +9,7 @@ class SpeexWrapper {
 
     // Dichiarazione dei metodi nativi
     external fun initSpeex()
-    external fun processAudio(audioData: ShortArray)
+    external fun processAudio(audioData: ShortArray): Boolean
     external fun destroySpeex()
 
 }
