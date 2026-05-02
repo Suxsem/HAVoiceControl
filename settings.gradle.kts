@@ -22,3 +22,8 @@ dependencyResolutionManagement {
 
 rootProject.name = "Voice Control for Home Assistant"
 include(":app")
+
+val localSettings = file("local.settings.gradle.kts")
+if (localSettings.exists()) {
+    apply(from = localSettings)
+}

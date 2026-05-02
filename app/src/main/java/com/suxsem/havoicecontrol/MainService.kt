@@ -19,11 +19,10 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.suxsem.androidwakeword.WakeWordDetector
 
 class MainService : Service() {
 
@@ -103,7 +102,7 @@ class MainService : Service() {
             val minScore = prefs.getFloat("min_score", 0f)
 
             //TODO parametri
-            detector = WakeWordDetector(applicationContext, "ei_fausta_20260403_201953.onnx", "ei_fausta_20260403_201953.onnx", minScore, 0f) { score ->
+            detector = WakeWordDetector(applicationContext, "hei_vichi_20260501_142019.onnx", "verifier.onnx", minScore, 0.1f) { score ->
                 Log.d("WakeWordService", "Wake word detected con score=$score")
 
                 detector!!.pauseDetection()

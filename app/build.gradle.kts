@@ -37,11 +37,6 @@ android {
     buildFeatures {
         compose = true
     }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
-    }
 }
 
 kotlin {
@@ -51,7 +46,7 @@ kotlin {
 }
 
 dependencies {
-
+    implementation(libs.androidwakeword)
     implementation(libs.androidx.compose.material.material.icons.core)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -82,5 +77,4 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.commons.math3)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation (libs.onnxruntime.android)
 }
